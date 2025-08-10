@@ -119,19 +119,6 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!134 &511770273
-PhysicsMaterial:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: ' (Instance)'
-  serializedVersion: 2
-  m_DynamicFriction: 0.6
-  m_StaticFriction: 0.6
-  m_Bounciness: 0
-  m_FrictionCombine: 0
-  m_BounceCombine: 0
 --- !u!1 &884223579
 GameObject:
   m_ObjectHideFlags: 0
@@ -222,6 +209,19 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!134 &1063673009
+PhysicsMaterial:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: ' (Instance) (Instance) (Instance)'
+  serializedVersion: 2
+  m_DynamicFriction: 0.6
+  m_StaticFriction: 0.6
+  m_Bounciness: 0
+  m_FrictionCombine: 0
+  m_BounceCombine: 0
 --- !u!1 &1073604322
 GameObject:
   m_ObjectHideFlags: 0
@@ -313,13 +313,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1073604322}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.4454254, y: 0.22965747, z: -0.11935138, w: -0.8570934}
+  m_LocalRotation: {x: 0.6468095, y: -0.19222447, z: 0.17331219, w: 0.7173912}
   m_LocalPosition: {x: 0, y: 3, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: -305.079, y: -30, z: 0}
+  m_LocalEulerAnglesHint: {x: 84.077, y: -30, z: 0}
 --- !u!114 &1073604325
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -487,9 +487,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 797204f8fe15f7f4e8ab86d39ba3f810, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  moveSpeed: 3
+  walkSpeed: 4
+  sprintSpeed: 7
+  crouchSpeed: 2
   mouseSensitivity: 2
   jumpForce: 1
+  sprintKey: 304
+  sprintFOVIncrease: 10
+  fovTransitionSpeed: 10
+  crouchKey: 306
+  crouchHeight: 1
+  standHeight: 1.8
+  crouchTransitionSpeed: 10
   interactionRange: 5
   blockLayerMask:
     serializedVersion: 2
@@ -501,7 +510,7 @@ CharacterController:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1426170045}
-  m_Material: {fileID: 511770273}
+  m_Material: {fileID: 1063673009}
   m_IncludeLayers:
     serializedVersion: 2
     m_Bits: 0
@@ -512,8 +521,8 @@ CharacterController:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Height: 1.8
-  m_Radius: 0.4
+  m_Height: 0.89
+  m_Radius: 0.3
   m_SlopeLimit: 45
   m_StepOffset: 0.3
   m_SkinWidth: 0.08
@@ -548,6 +557,7 @@ GameObject:
   - component: {fileID: 1634668433}
   - component: {fileID: 1634668432}
   - component: {fileID: 1634668435}
+  - component: {fileID: 1634668436}
   m_Layer: 0
   m_Name: PlayerCamera
   m_TagString: MainCamera
@@ -577,7 +587,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1634668430}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 35c2e501741cbd54e9eb80810e97f195, type: 3}
   m_Name: 
@@ -711,6 +721,37 @@ MonoBehaviour:
     m_MipBias: 0
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
+--- !u!114 &1634668436
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1634668430}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ff92cfa44e4c0da4ea50cffe8c8c9c25, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  enableHeadBob: 1
+  walkBobSpeed: 10
+  walkBobAmount: 0.2
+  sprintBobSpeed: 15
+  sprintBobAmount: 0.075
+  crouchBobSpeed: 8
+  crouchBobAmount: 0.025
+  enableTilt: 1
+  tiltAmount: 5
+  tiltSpeed: 10
+  enableJumpEffects: 1
+  jumpBobAmount: 3
+  jumpBobSpeed: 10
+  landingBobAmount: 3
+  landingRecoverySpeed: 5
+  enableMouseSway: 1
+  swayAmount: 0.01
+  maxSwayAmount: 0.03
+  swaySmooth: 8
 --- !u!1 &1736353492
 GameObject:
   m_ObjectHideFlags: 0
