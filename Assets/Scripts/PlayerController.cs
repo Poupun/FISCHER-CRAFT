@@ -17,11 +17,11 @@ public class PlayerController : MonoBehaviour
     [Header("Crouch Settings")]
     public KeyCode crouchKey = KeyCode.LeftControl;
     public float crouchHeight = 1.3f;  // Reduced to 1.3 blocks tall when crouching
-    public float standHeight = 1.3f;    // Standard Minecraft player height
+    public float standHeight = 1.8f;    // Keep player compact for this project scale
     public float crouchTransitionSpeed = 10f;
     
     [Header("Interaction")]
-    public float interactionRange = 5f;
+    public float interactionRange = 4f;
     public LayerMask blockLayerMask = -1;
     
     private CharacterController characterController;
@@ -192,12 +192,26 @@ public class PlayerController : MonoBehaviour
             {
                 if (worldGenerator != null)
                 {
+                    // Breaking Grass should give Dirt instead of Grass
+                    BlockType dropType = blockInfo.blockType == BlockType.Grass ? BlockType.Dirt : blockInfo.blockType;
                     worldGenerator.PlaceBlock(blockInfo.position, BlockType.Air);
-                    
-                    // Add block to inventory
-                    if (inventory != null)
+                    if (inventory != null) inventory.AddBlock(dropType);
+                }
+            }
+            else
+            {
+                // Fallback: if we hit a plant (billboard) without BlockInfo, remove the plant via world API
+                // Plants live at the cell above their support; we can approximate from hit.point
+                if (worldGenerator != null)
+                {
+                    Vector3 hitPos = hit.point - hit.normal * 0.01f; // bias inside the plant volume
+                    Vector3Int cell = Vector3Int.RoundToInt(hitPos);
+                    // Ensure we choose the cell that holds plantObjects (above support)
+                    // Ray usually hits the plant at y ~ top; get the integer cell and ensure support below is Grass
+                    Vector3Int support = cell + Vector3Int.down;
+                    if (worldGenerator.GetBlockType(support) == BlockType.Grass)
                     {
-                        inventory.AddBlock(blockInfo.blockType);
+                        worldGenerator.RemovePlantAt(cell);
                     }
                 }
             }
@@ -211,8 +225,31 @@ public class PlayerController : MonoBehaviour
         
         if (Physics.Raycast(ray, out hit, interactionRange, blockLayerMask))
         {
-            Vector3 hitPoint = hit.point + hit.normal * 0.5f;
-            Vector3Int blockPosition = Vector3Int.RoundToInt(hitPoint);
+            Vector3Int blockPosition;
+            var bi = hit.collider.GetComponent<BlockInfo>();
+            if (bi != null)
+            {
+                // Place adjacent to the face we clicked
+                Vector3 hitPoint = hit.point + hit.normal * 0.5f;
+                blockPosition = Vector3Int.RoundToInt(hitPoint);
+            }
+            else
+            {
+                // Clicked a plant (trigger): place directly in the plant's cell (replacing it).
+                // Use collider center to avoid rounding to a neighboring cell at edges.
+                Vector3 plantCenter = hit.collider.bounds.center;
+                blockPosition = Vector3Int.RoundToInt(plantCenter);
+            }
+
+            // Prevent placing a block overlapping the player
+            if (characterController != null)
+            {
+                Bounds blockBounds = new Bounds((Vector3)blockPosition, Vector3.one);
+                if (blockBounds.Intersects(characterController.bounds))
+                {
+                    return; // skip placement if it would intersect the player
+                }
+            }
             
             if (inventory != null && worldGenerator != null)
             {

@@ -194,6 +194,10 @@ MonoBehaviour:
     m_RotationOrder: 4
   textureScaleVariation: 1
   textureOffsetVariation: 0.1
+  tickIntervalSeconds: 0.5
+  plantRespawnDelayTicks: 5
+  newGrassPlantDelayTicks: 5
+  dirtToGrassDelayTicks: 10
 --- !u!4 &884223581
 Transform:
   m_ObjectHideFlags: 0
@@ -521,7 +525,7 @@ CharacterController:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Height: 0.89
+  m_Height: 1.8
   m_Radius: 0.3
   m_SlopeLimit: 45
   m_StepOffset: 0.3

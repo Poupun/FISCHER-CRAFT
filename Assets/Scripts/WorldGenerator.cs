@@ -38,20 +38,44 @@ public class WorldGenerator : MonoBehaviour
     private Dictionary<Vector3Int, GameObject> plantObjects = new Dictionary<Vector3Int, GameObject>();
     private Material[] blockMaterials;
     private TextureVariationManager textureManager;
+    
+    // Tick system for delayed plant behavior
+    [Header("Tick Settings")]
+    [Tooltip("Seconds per game tick (Minecraft-like pacing)")]
+    public float tickIntervalSeconds = 0.5f;
+    [Tooltip("Ticks before plants reappear after being broken")] public int plantRespawnDelayTicks = 5;
+    [Tooltip("Ticks before plants appear on newly placed/revealed grass")] public int newGrassPlantDelayTicks = 5;
+    [Tooltip("Ticks before exposed Dirt turns into Grass")] public int dirtToGrassDelayTicks = 10;
+    private float _tickAccum = 0f;
+    private int _currentTick = 0;
+    private struct TickAction { public int dueTick; public int type; public Vector3Int cell; }
+    private const int TA_PlantRespawn = 1;
+    private const int TA_GrassGrow = 2;
+    private readonly List<TickAction> _tickQueue = new List<TickAction>();
+    private readonly HashSet<Vector3Int> _scheduledPlantCells = new HashSet<Vector3Int>(); // grass cell keys
+    private readonly HashSet<Vector3Int> _scheduledGrassCells = new HashSet<Vector3Int>(); // dirt cell keys
 
     
     void Start()
     {
-        // Try to find TextureVariationManager, create one if it doesn't exist
-        textureManager = GetComponent<TextureVariationManager>();
-        if (textureManager == null)
-        {
-            textureManager = gameObject.AddComponent<TextureVariationManager>();
-        }
+    // Try to find TextureVariationManager if already configured in the scene (optional)
+    textureManager = GetComponent<TextureVariationManager>();
         
         LoadTextures();
         CreateBlockMaterials();
         GenerateWorld();
+    }
+    
+    void Update()
+    {
+        // Tick scheduler processing
+        _tickAccum += Time.deltaTime;
+        while (_tickAccum >= tickIntervalSeconds)
+        {
+            _tickAccum -= tickIntervalSeconds;
+            _currentTick++;
+            ProcessTick();
+        }
     }
     
     
@@ -219,10 +243,6 @@ public class WorldGenerator : MonoBehaviour
     // Spawn plants on top of exposed Grass blocks
     void SpawnPlants()
     {
-        // Weighted rarity: 1 most common, 8 rarest
-        int[] weights = new int[] { 40, 25, 15, 9, 6, 3, 1, 1 };
-        int total = 0; foreach (var w in weights) total += w;
-
         System.Random rng = new System.Random(12345);
 
         for (int x = 0; x < worldWidth; x++)
@@ -261,42 +281,8 @@ public class WorldGenerator : MonoBehaviour
                                         }
                                     }
                                     parent.transform.position = placePos;
-
-                                    for (int i = 0; i < count; i++)
-                                    {
-                                        // pick a plant texture by weights
-                                        int pick = rng.Next(total);
-                                        int idx = 0; int acc = 0;
-                                        for (; idx < weights.Length; idx++) { acc += weights[idx]; if (pick < acc) break; }
-                                        idx = Mathf.Clamp(idx, 0, plantTextures.Length - 1);
-                                        var tex = plantTextures[idx];
-                                        if (tex == null) continue;
-
-                                        var child = new GameObject($"Plant_{idx+1}");
-                                        child.transform.parent = parent.transform;
-                                        // small random local offset inside the tile footprint
-                                        float off = 0.18f;
-                                        float ox = (float)(rng.NextDouble()*2 - 1) * off;
-                                        float oz = (float)(rng.NextDouble()*2 - 1) * off;
-                                        child.transform.localPosition = new Vector3(ox, 0f, oz);
-                                        child.transform.localRotation = Quaternion.Euler(0f, (float)(rng.NextDouble()*360.0), 0f);
-                                        child.AddComponent<MeshFilter>();
-                                        child.AddComponent<MeshRenderer>();
-                                        var pbt = ResolveTypeByName("PlantBillboard");
-                                        if (pbt != null)
-                                        {
-                                            var comp = child.AddComponent(pbt);
-                                            float h = Mathf.Lerp(0.5f, 1.2f, idx / 7.0f);
-                                            var method = pbt.GetMethod("Configure", new System.Type[] { typeof(Texture2D), typeof(float), typeof(float), typeof(float) });
-                                            if (method != null)
-                                            {
-                                                method.Invoke(comp, new object[] { tex, 0.9f, h, 0.01f });
-                                            }
-                                            var fWorld = pbt.GetField("world"); if (fWorld != null) fWorld.SetValue(comp, this);
-                                            var fSupport = pbt.GetField("supportCell"); if (fSupport != null) fSupport.SetValue(comp, new Vector3Int(x, y, z));
-                                        }
-                                    }
-
+                                    // Use helper so initial plants have colliders and correct config
+                                    SpawnPlantChildrenIntoParent(parent, new Vector3Int(x, y, z), count, rng);
                                     plantObjects[new Vector3Int(x, y + 1, z)] = parent;
                                 }
                             }
@@ -441,7 +427,6 @@ public class WorldGenerator : MonoBehaviour
     {
         if (IsOutOfBounds(position)) return false;
         
-        BlockType oldBlockType = worldData[position.x, position.y, position.z];
         worldData[position.x, position.y, position.z] = blockType;
 
         // If a block is placed where a plant currently exists, remove the plant at that cell
@@ -464,6 +449,36 @@ public class WorldGenerator : MonoBehaviour
                 plantObjects.Remove(above);
             }
         }
+
+    // If placing a non-air block and the block below is Grass, convert it to Dirt
+        if (blockType != BlockType.Air)
+        {
+            var below = position + Vector3Int.down;
+            if (!IsOutOfBounds(below) && GetBlockType(below) == BlockType.Grass)
+            {
+                worldData[below.x, below.y, below.z] = BlockType.Dirt;
+                // Remove any plant above that grass cell
+                var aboveBelow = below + Vector3Int.up;
+                if (plantObjects.TryGetValue(aboveBelow, out var plantAtAboveBelow))
+                {
+                    if (plantAtAboveBelow != null) Destroy(plantAtAboveBelow);
+                    plantObjects.Remove(aboveBelow);
+                }
+                _scheduledPlantCells.Remove(below);
+                // Refresh visuals for the converted block
+                if (blockObjects.ContainsKey(below))
+                {
+                    Destroy(blockObjects[below]);
+                    blockObjects.Remove(below);
+                }
+                CreateBlock(below, BlockType.Dirt);
+            }
+            // If covering exposed Dirt, cancel growth
+            if (!IsOutOfBounds(below) && GetBlockType(below) == BlockType.Dirt)
+            {
+                _scheduledGrassCells.Remove(below);
+            }
+        }
         
         if (blockType == BlockType.Air)
         {
@@ -473,11 +488,26 @@ public class WorldGenerator : MonoBehaviour
                 Destroy(blockObjects[position]);
                 blockObjects.Remove(position);
             }
+            // If removing a block exposes Dirt below, schedule grass growth
+            var belowIfAny = position + Vector3Int.down;
+            if (!IsOutOfBounds(belowIfAny) && GetBlockType(belowIfAny) == BlockType.Dirt && GetBlockType(position) == BlockType.Air)
+            {
+                ScheduleGrassGrowth(belowIfAny, dirtToGrassDelayTicks);
+            }
         }
         else
         {
             // Place block
             CreateBlock(position, blockType);
+        }
+
+        // If we placed Grass with Air above, schedule delayed plant spawn at this position
+    if (blockType == BlockType.Grass)
+        {
+            if (GetBlockType(above) == BlockType.Air)
+            {
+                SchedulePlantRespawn(position, newGrassPlantDelayTicks);
+            }
         }
         
         // Update neighboring blocks visibility
@@ -510,77 +540,15 @@ public class WorldGenerator : MonoBehaviour
                         {
                             CreateBlock(neighbor, blockType);
                         }
-                        // If this is grass with air above, consider spawning a plant (on-demand)
+                        // If this is grass with air above, schedule a delayed plant spawn (on-demand)
                         if (blockType == BlockType.Grass && GetBlockType(neighbor + Vector3Int.up) == BlockType.Air)
                         {
-                            // Avoid duplicates
-                            if (!plantObjects.ContainsKey(neighbor + Vector3Int.up))
-                            {
-                                // When revealing a new grass top, spawn a cluster based on scaled density
-                                System.Random rng = new System.Random(neighbor.GetHashCode());
-                                if (HasAnyPlantTextures())
-                                {
-                                    int[] weights = new int[] { 40, 25, 15, 9, 6, 3, 1, 1 };
-                                    int total = 0; foreach (var w in weights) total += w;
-
-                                    float desired = Mathf.Max(0f, plantDensity * 0.5f);
-                                    int count = Mathf.FloorToInt(desired);
-                                    double remainder = desired - count;
-                                    if (rng.NextDouble() < remainder) count++;
-
-                                    if (count > 0)
-                                    {
-                                        var parent = new GameObject($"Plants ({neighbor.x},{neighbor.y+1},{neighbor.z})");
-                                        parent.transform.parent = this.transform;
-                                        Vector3 placePos2 = new Vector3(neighbor.x + 0.5f, neighbor.y + 0.5f, neighbor.z + 0.5f);
-                                        if (blockObjects.TryGetValue(neighbor, out var grassGo2))
-                                        {
-                                            var rend2 = grassGo2.GetComponent<Renderer>();
-                                            if (rend2 != null)
-                                            {
-                                                var b2 = rend2.bounds;
-                                                placePos2 = new Vector3(b2.center.x, b2.max.y + 0.001f, b2.center.z);
-                                            }
-                                        }
-                                        parent.transform.position = placePos2;
-
-                                        for (int i = 0; i < count; i++)
-                                        {
-                                            int pick = rng.Next(total);
-                                            int idx = 0; int acc = 0;
-                                            for (; idx < weights.Length; idx++) { acc += weights[idx]; if (pick < acc) break; }
-                                            idx = Mathf.Clamp(idx, 0, plantTextures.Length - 1);
-                                            var tex = plantTextures[idx];
-                                            if (tex == null) continue;
-
-                                            var child = new GameObject($"Plant_{idx+1}");
-                                            child.transform.parent = parent.transform;
-                                            float off = 0.18f;
-                                            float ox = (float)(rng.NextDouble()*2 - 1) * off;
-                                            float oz = (float)(rng.NextDouble()*2 - 1) * off;
-                                            child.transform.localPosition = new Vector3(ox, 0f, oz);
-                                            child.transform.localRotation = Quaternion.Euler(0f, (float)(rng.NextDouble()*360.0), 0f);
-                                            child.AddComponent<MeshFilter>();
-                                            child.AddComponent<MeshRenderer>();
-                                            var pbt = ResolveTypeByName("PlantBillboard");
-                                            if (pbt != null)
-                                            {
-                                                var comp = child.AddComponent(pbt);
-                                                float h = Mathf.Lerp(0.5f, 1.2f, idx / 7.0f);
-                                                var method = pbt.GetMethod("Configure", new System.Type[] { typeof(Texture2D), typeof(float), typeof(float), typeof(float) });
-                                                if (method != null)
-                                                {
-                                                    method.Invoke(comp, new object[] { tex, 0.9f, h, 0.01f });
-                                                }
-                                                var fWorld = pbt.GetField("world"); if (fWorld != null) fWorld.SetValue(comp, this);
-                                                var fSupport = pbt.GetField("supportCell"); if (fSupport != null) fSupport.SetValue(comp, neighbor);
-                                            }
-                                        }
-
-                                        plantObjects[neighbor + Vector3Int.up] = parent;
-                                    }
-                                }
-                            }
+                            SchedulePlantRespawn(neighbor, newGrassPlantDelayTicks);
+                        }
+                        // If this is dirt with air above, schedule grass growth
+                        if (blockType == BlockType.Dirt && GetBlockType(neighbor + Vector3Int.up) == BlockType.Air)
+                        {
+                            ScheduleGrassGrowth(neighbor, dirtToGrassDelayTicks);
                         }
                     }
                     else
@@ -620,6 +588,144 @@ public class WorldGenerator : MonoBehaviour
         {
             if (obj != null) Destroy(obj);
             plantObjects.Remove(cell);
+            // Schedule a delayed respawn on the supporting grass cell
+            var grassCell = cell + Vector3Int.down;
+            SchedulePlantRespawn(grassCell, plantRespawnDelayTicks);
+        }
+    }
+
+    // --- Tick scheduling and helpers ---
+    public void SchedulePlantRespawn(Vector3Int grassCell, int delayTicks)
+    {
+        if (IsOutOfBounds(grassCell)) return;
+        var above = grassCell + Vector3Int.up;
+        if (GetBlockType(grassCell) != BlockType.Grass) return;
+        if (GetBlockType(above) != BlockType.Air) return;
+        if (plantObjects.ContainsKey(above)) return;
+        if (_scheduledPlantCells.Contains(grassCell)) return;
+        _scheduledPlantCells.Add(grassCell);
+        _tickQueue.Add(new TickAction { dueTick = _currentTick + Mathf.Max(1, delayTicks), type = TA_PlantRespawn, cell = grassCell });
+    }
+
+    public void ScheduleGrassGrowth(Vector3Int dirtCell, int delayTicks)
+    {
+        if (IsOutOfBounds(dirtCell)) return;
+        var above = dirtCell + Vector3Int.up;
+        if (GetBlockType(dirtCell) != BlockType.Dirt) return;
+        if (GetBlockType(above) != BlockType.Air) return;
+        if (_scheduledGrassCells.Contains(dirtCell)) return;
+        _scheduledGrassCells.Add(dirtCell);
+        _tickQueue.Add(new TickAction { dueTick = _currentTick + Mathf.Max(1, delayTicks), type = TA_GrassGrow, cell = dirtCell });
+    }
+
+    private void ProcessTick()
+    {
+        if (_tickQueue.Count == 0) return;
+        for (int i = _tickQueue.Count - 1; i >= 0; i--)
+        {
+            var ta = _tickQueue[i];
+            if (ta.dueTick > _currentTick) continue;
+            _tickQueue.RemoveAt(i);
+            if (ta.type == TA_PlantRespawn)
+            {
+                _scheduledPlantCells.Remove(ta.cell);
+                TrySpawnPlantClusterAt(ta.cell);
+            }
+            else if (ta.type == TA_GrassGrow)
+            {
+                _scheduledGrassCells.Remove(ta.cell);
+                if (GetBlockType(ta.cell) == BlockType.Dirt && GetBlockType(ta.cell + Vector3Int.up) == BlockType.Air)
+                {
+                    worldData[ta.cell.x, ta.cell.y, ta.cell.z] = BlockType.Grass;
+                    if (blockObjects.ContainsKey(ta.cell))
+                    {
+                        Destroy(blockObjects[ta.cell]);
+                        blockObjects.Remove(ta.cell);
+                    }
+                    CreateBlock(ta.cell, BlockType.Grass);
+                    // Plants should appear later on new grass
+                    SchedulePlantRespawn(ta.cell, newGrassPlantDelayTicks);
+                    UpdateNeighboringBlocks(ta.cell);
+                }
+            }
+        }
+    }
+
+    private void TrySpawnPlantClusterAt(Vector3Int grassCell)
+    {
+        if (IsOutOfBounds(grassCell)) return;
+        var above = grassCell + Vector3Int.up;
+        if (GetBlockType(grassCell) != BlockType.Grass) return;
+        if (GetBlockType(above) != BlockType.Air) return;
+        if (plantObjects.ContainsKey(above)) return;
+        if (!ShouldRenderBlock(grassCell.x, grassCell.y, grassCell.z)) return;
+        if (!HasAnyPlantTextures()) return;
+
+        System.Random rng = new System.Random(grassCell.GetHashCode() ^ (_currentTick * 997));
+        float desired = Mathf.Max(0f, plantDensity * 0.5f);
+        int count = Mathf.FloorToInt(desired);
+        double remainder = desired - count;
+        if (rng.NextDouble() < remainder) count++;
+        if (count <= 0) return;
+
+        var parent = new GameObject($"Plants ({grassCell.x},{grassCell.y+1},{grassCell.z})");
+        parent.transform.parent = this.transform;
+        Vector3 placePos = new Vector3(grassCell.x + 0.5f, grassCell.y + 0.5f, grassCell.z + 0.5f);
+        if (blockObjects.TryGetValue(grassCell, out var grassGo))
+        {
+            var rend = grassGo.GetComponent<Renderer>();
+            if (rend != null)
+            {
+                var b = rend.bounds;
+                placePos = new Vector3(b.center.x, b.max.y + 0.001f, b.center.z);
+            }
+        }
+        parent.transform.position = placePos;
+        SpawnPlantChildrenIntoParent(parent, grassCell, count, rng);
+        plantObjects[above] = parent;
+    }
+
+    private void SpawnPlantChildrenIntoParent(GameObject parent, Vector3Int grassCell, int count, System.Random rng)
+    {
+        int[] weights = new int[] { 40, 25, 15, 9, 6, 3, 1, 1 };
+        int total = 0; foreach (var w in weights) total += w;
+        var pbt = ResolveTypeByName("PlantBillboard");
+        for (int i = 0; i < count; i++)
+        {
+            int pick = rng.Next(total);
+            int idx = 0; int acc = 0;
+            for (; idx < weights.Length; idx++) { acc += weights[idx]; if (pick < acc) break; }
+            idx = Mathf.Clamp(idx, 0, plantTextures.Length - 1);
+            var tex = plantTextures[idx];
+            if (tex == null) continue;
+
+            var child = new GameObject($"Plant_{idx+1}");
+            child.transform.parent = parent.transform;
+            float off = 0.18f;
+            float ox = (float)(rng.NextDouble()*2 - 1) * off;
+            float oz = (float)(rng.NextDouble()*2 - 1) * off;
+            child.transform.localPosition = new Vector3(ox, 0f, oz);
+            child.transform.localRotation = Quaternion.Euler(0f, (float)(rng.NextDouble()*360.0), 0f);
+            child.AddComponent<MeshFilter>();
+            child.AddComponent<MeshRenderer>();
+            // Add collider so player can break plants
+            float h = Mathf.Lerp(0.5f, 1.2f, idx / 7.0f);
+            var col = child.AddComponent<BoxCollider>();
+            col.size = new Vector3(0.6f, h, 0.6f);
+            col.center = new Vector3(0f, 0.01f + h * 0.5f, 0f);
+            col.isTrigger = true; // plants shouldn't block the player
+
+            if (pbt != null)
+            {
+                var comp = child.AddComponent(pbt);
+                var method = pbt.GetMethod("Configure", new System.Type[] { typeof(Texture2D), typeof(float), typeof(float), typeof(float) });
+                if (method != null)
+                {
+                    method.Invoke(comp, new object[] { tex, 0.9f, h, 0.01f });
+                }
+                var fWorld = pbt.GetField("world"); if (fWorld != null) fWorld.SetValue(comp, this);
+                var fSupport = pbt.GetField("supportCell"); if (fSupport != null) fSupport.SetValue(comp, grassCell);
+            }
         }
     }
 

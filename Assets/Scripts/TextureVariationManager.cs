@@ -26,6 +26,11 @@ public class TextureVariationManager : MonoBehaviour
     
     void Awake()
     {
+        if (textureSets == null || textureSets.Length == 0)
+        {
+            // Silently skip setup if not configured to avoid noisy warnings
+            return;
+        }
         InitializeTextures();
         CreateVariationMaterials();
     }
@@ -38,7 +43,6 @@ public class TextureVariationManager : MonoBehaviour
         // Add null check for textureSets
         if (textureSets == null)
         {
-            Debug.LogWarning("TextureVariationManager: textureSets is null. No texture variations will be available.");
             return;
         }
         
@@ -79,7 +83,6 @@ public class TextureVariationManager : MonoBehaviour
         // Add null check for textureSets
         if (textureSets == null)
         {
-            Debug.LogWarning("TextureVariationManager: textureSets is null. No materials will be created.");
             return;
         }
         
@@ -119,11 +122,7 @@ public class TextureVariationManager : MonoBehaviour
                     
                     set.materials[i] = mat;
                     
-                    // Update BlockDatabase if it exists
-                    if (i == 0 && BlockDatabase.blockTypes.Length > (int)set.blockType)
-                    {
-                        BlockDatabase.blockTypes[(int)set.blockType].blockMaterial = mat;
-                    }
+                    // Optionally update BlockDatabase if needed; currently disabled to keep logic explicit
                 }
             }
         }
