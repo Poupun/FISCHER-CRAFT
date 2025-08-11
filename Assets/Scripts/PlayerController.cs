@@ -185,6 +185,24 @@ public class PlayerController : MonoBehaviour
         Ray ray = playerCamera.ScreenPointToRay(new Vector3(Screen.width / 2, Screen.height / 2, 0));
         RaycastHit hit;
         
+        // If world uses chunk meshing, prefer voxel DDA raycast for accuracy against MeshCollider
+        if (worldGenerator != null && worldGenerator.useChunkStreaming && worldGenerator.useChunkMeshing)
+        {
+            Vector3Int hitCell, placeCell; Vector3 hitNormal;
+            if (worldGenerator.TryVoxelRaycast(ray, interactionRange, out hitCell, out placeCell, out hitNormal))
+            {
+                // Break the hit block and collect drop
+                var t = worldGenerator.GetBlockType(hitCell);
+                if (t != BlockType.Air)
+                {
+                    BlockType dropType = t == BlockType.Grass ? BlockType.Dirt : t;
+                    worldGenerator.PlaceBlock(hitCell, BlockType.Air);
+                    if (inventory != null) inventory.AddBlock(dropType);
+                    return;
+                }
+            }
+        }
+
         if (Physics.Raycast(ray, out hit, interactionRange, blockLayerMask))
         {
             BlockInfo blockInfo = hit.collider.GetComponent<BlockInfo>();
@@ -223,6 +241,33 @@ public class PlayerController : MonoBehaviour
         Ray ray = playerCamera.ScreenPointToRay(new Vector3(Screen.width / 2, Screen.height / 2, 0));
         RaycastHit hit;
         
+        // If world uses chunk meshing, use voxel raycast to determine target cell
+        if (worldGenerator != null && worldGenerator.useChunkStreaming && worldGenerator.useChunkMeshing)
+        {
+            Vector3Int hitCell, placeCell; Vector3 hitNormal;
+            if (worldGenerator.TryVoxelRaycast(ray, interactionRange, out hitCell, out placeCell, out hitNormal))
+            {
+                Vector3Int blockPosition = placeCell; // adjacent empty cell before the solid we hit
+
+                // Prevent placing a block overlapping the player
+                if (characterController != null)
+                {
+                    Bounds blockBounds = new Bounds((Vector3)blockPosition, Vector3.one);
+                    if (blockBounds.Intersects(characterController.bounds)) return;
+                }
+
+                if (inventory != null && worldGenerator != null)
+                {
+                    BlockType blockToPlace = inventory.GetCurrentBlock();
+                    if (blockToPlace != BlockType.Air && inventory.RemoveBlock(blockToPlace))
+                    {
+                        worldGenerator.PlaceBlock(blockPosition, blockToPlace);
+                    }
+                }
+                return;
+            }
+        }
+
         if (Physics.Raycast(ray, out hit, interactionRange, blockLayerMask))
         {
             Vector3Int blockPosition;

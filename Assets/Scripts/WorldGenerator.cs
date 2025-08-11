@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System.Collections;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 public class WorldGenerator : MonoBehaviour
 {
@@ -7,9 +9,52 @@ public class WorldGenerator : MonoBehaviour
     public int worldWidth = 16;
     public int worldHeight = 16;
     public int worldDepth = 16;
+
+    [Header("Superflat Settings")] 
+    [Tooltip("When enabled, generate a Minecraft-like superflat world (no caves, plains only)")]
+    public bool generateSuperflat = true;
+    [Min(0)] public int flatStoneLayers = 1;   // acts as bedrock for now
+    [Min(0)] public int flatDirtLayers = 3;
+    [Min(0)] public int flatGrassLayers = 1;
+
+    [Header("Chunk Streaming")] 
+    [Tooltip("Enable player-centered chunk streaming for infinite superflat world")]
+    public bool useChunkStreaming = true;
+    [Min(4)] public int chunkSizeX = 16;
+    [Min(4)] public int chunkSizeZ = 16;
+    [Min(1)] public int viewDistanceChunks = 4; // Manhattan or square radius
+    [Tooltip("Player transform used to center chunk streaming. If null, will try to auto-find.")]
+    public Transform player;
+    private Transform _chunksRoot;
+    private readonly Dictionary<Vector2Int, WorldGeneration.Chunks.Chunk> _chunks = new Dictionary<Vector2Int, WorldGeneration.Chunks.Chunk>();
+    private readonly Queue<Vector2Int> _pendingLoads = new Queue<Vector2Int>();
+    private readonly HashSet<Vector2Int> _queued = new HashSet<Vector2Int>();
+    private readonly HashSet<Vector2Int> _loading = new HashSet<Vector2Int>();
+    [Min(1)] public int maxChunkLoadsPerFrame = 1;
+    [Header("Meshing (Experimental)")]
+    [Tooltip("If enabled, build one mesh per chunk instead of instantiating each block GameObject.")]
+    public bool useChunkMeshing = true;
+    [Tooltip("Add MeshCollider to chunk mesh for collisions.")]
+    public bool addChunkCollider = true;
+    [Header("Persistence")]
+    [Tooltip("Save chunk edits so placed/removed blocks persist across unloads.")]
+    public bool enableChunkPersistence = true;
+    [Tooltip("Folder name under persistent data path to store chunk saves.")]
+    public string saveFolderName = "ChunkSaves";
     
     [Header("Block Prefab")]
     public GameObject blockPrefab;
+    
+    [Header("Lighting")]
+    [Tooltip("Apply a flat ambient light so underside faces (like grass bottoms) aren’t pitch black.")]
+    public bool applyFlatAmbientLighting = true;
+    [ColorUsage(false, true)] public Color ambientColor = new Color(0.35f, 0.35f, 0.35f);
+    
+    [Header("Player Spawn Gating")]
+    [Tooltip("If enabled, the player GameObject stays inactive until the first center chunk finishes building its mesh.")]
+    public bool delayPlayerSpawnUntilChunks = true;
+    [Tooltip("After chunks are ready, reposition the player to stand on the highest solid block under them.")]
+    public bool snapPlayerToGroundOnSpawn = true;
     
     [Header("Block Textures")]
     public Texture2D grassTexture;
@@ -23,8 +68,12 @@ public class WorldGenerator : MonoBehaviour
     public Texture2D[] plantTextures = new Texture2D[8];
 
     [Header("Plant Spawn Settings")]
-    [Range(0f, 3f)] public float plantDensity = 0.7f; // density control; probability is clamped to [0,1]
+    [Range(0f, 3f)] public float plantDensity = 0.7f; // expected plants per grass tile
     public AnimationCurve plantRarityCurve = AnimationCurve.Linear(0, 1, 1, 0); // we will override by weights
+    [Tooltip("Maximum number of crossed-quads per plant cluster.")]
+    [Range(1, 6)] public int plantClusterMaxQuads = 3;
+    [Tooltip("Combine each cluster into one MeshRenderer to reduce GameObjects.")]
+    public bool plantsCombineIntoSingleRenderer = true;
 
     [Header("Anti-Tiling Settings")]
     [Range(0.8f, 1.2f)]
@@ -37,7 +86,12 @@ public class WorldGenerator : MonoBehaviour
     private Dictionary<Vector3Int, GameObject> blockObjects = new Dictionary<Vector3Int, GameObject>();
     private Dictionary<Vector3Int, GameObject> plantObjects = new Dictionary<Vector3Int, GameObject>();
     private Material[] blockMaterials;
+    // Cached special-case materials
+    private Material _grassSideMaterial; // for grass side faces only
+    private Material _grassSideOverlayMaterial; // transparent cutout overlay used atop dirt on grass sides
     private TextureVariationManager textureManager;
+    // Cache for plant materials by texture so we don't create per-instance materials
+    private readonly Dictionary<Texture2D, Material> _plantMaterialCache = new Dictionary<Texture2D, Material>();
     
     // Tick system for delayed plant behavior
     [Header("Tick Settings")]
@@ -54,6 +108,14 @@ public class WorldGenerator : MonoBehaviour
     private readonly List<TickAction> _tickQueue = new List<TickAction>();
     private readonly HashSet<Vector3Int> _scheduledPlantCells = new HashSet<Vector3Int>(); // grass cell keys
     private readonly HashSet<Vector3Int> _scheduledGrassCells = new HashSet<Vector3Int>(); // dirt cell keys
+    // Chunk persistence: per-chunk map of edited cells (world cell -> type)
+    private readonly Dictionary<Vector2Int, Dictionary<Vector3Int, BlockType>> _chunkEdits = new Dictionary<Vector2Int, Dictionary<Vector3Int, BlockType>>();
+
+    // Save DTOs (local to avoid cross-file dependency)
+    [System.Serializable]
+    private class ChangedCellDTO { public int x; public int y; public int z; public int t; }
+    [System.Serializable]
+    private class ChunkSaveDTO { public int cx; public int cz; public int sizeX; public int sizeY; public int sizeZ; public ChangedCellDTO[] changes; }
 
     
     void Start()
@@ -63,7 +125,25 @@ public class WorldGenerator : MonoBehaviour
         
         LoadTextures();
         CreateBlockMaterials();
-        GenerateWorld();
+        if (applyFlatAmbientLighting)
+        {
+            RenderSettings.ambientMode = AmbientMode.Flat;
+            RenderSettings.ambientLight = ambientColor;
+        }
+        if (useChunkStreaming)
+        {
+            EnsureChunksRoot();
+            AutoFindPlayer();
+            UpdateStreaming(force: true);
+            if (delayPlayerSpawnUntilChunks)
+            {
+                StartCoroutine(StartupPlayerGate());
+            }
+        }
+        else
+        {
+            GenerateWorld();
+        }
     }
     
     void Update()
@@ -75,6 +155,22 @@ public class WorldGenerator : MonoBehaviour
             _tickAccum -= tickIntervalSeconds;
             _currentTick++;
             ProcessTick();
+        }
+
+        if (useChunkStreaming)
+        {
+            UpdateStreaming();
+            // Start background chunk loads (limited per frame)
+            int budget = Mathf.Max(1, maxChunkLoadsPerFrame);
+            while (budget-- > 0 && _pendingLoads.Count > 0)
+            {
+                var next = _pendingLoads.Dequeue();
+                _queued.Remove(next);
+                if (_chunks.ContainsKey(next) || _loading.Contains(next)) continue;
+                // Mark as loading before starting coroutine to avoid races
+                _loading.Add(next);
+                StartCoroutine(LoadChunkRoutine(next));
+            }
         }
     }
     
@@ -161,6 +257,7 @@ public class WorldGenerator : MonoBehaviour
                 if (BlockDatabase.blockTypes[i].blockTexture != null)
                 {
                     mat.mainTexture = BlockDatabase.blockTypes[i].blockTexture;
+                    mat.SetTexture("_BaseMap", BlockDatabase.blockTypes[i].blockTexture);
                     mat.color = Color.white; // Use white to show texture correctly
                 }
                 else
@@ -171,42 +268,362 @@ public class WorldGenerator : MonoBehaviour
                 // Configure material properties for pixel art and reduced tiling
                 mat.SetFloat("_Smoothness", 0.0f); // No glossiness
                 mat.SetFloat("_Metallic", 0.0f);   // Not metallic
+                // Two-sided so we see the underside faces when looking down into holes
+                mat.SetFloat("_Cull", 0f);
                 
                 mat.name = BlockDatabase.blockTypes[i].blockName + "Material";
                 blockMaterials[i] = mat;
                 BlockDatabase.blockTypes[i].blockMaterial = mat;
             }
         }
+
+        // Build a dedicated grass side material if we have a side texture
+        if (grassSideTexture != null)
+        {
+            _grassSideMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            _grassSideMaterial.name = "GrassSideMaterial";
+            _grassSideMaterial.mainTexture = grassSideTexture;
+            _grassSideMaterial.SetTexture("_BaseMap", grassSideTexture);
+            _grassSideMaterial.color = Color.white;
+            _grassSideMaterial.SetFloat("_Smoothness", 0.0f);
+            _grassSideMaterial.SetFloat("_Metallic", 0.0f);
+            _grassSideMaterial.SetFloat("_Cull", 0f);
+
+            // Overlay variant (alpha-clipped, unlit-like) to layer over dirt base
+            _grassSideOverlayMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            _grassSideOverlayMaterial.name = "GrassSideOverlay";
+            _grassSideOverlayMaterial.mainTexture = grassSideTexture;
+            _grassSideOverlayMaterial.SetTexture("_BaseMap", grassSideTexture);
+            _grassSideOverlayMaterial.color = Color.white;
+            _grassSideOverlayMaterial.SetFloat("_Cull", 0f);
+            _grassSideOverlayMaterial.SetFloat("_AlphaClip", 1f);
+            _grassSideOverlayMaterial.SetFloat("_Cutoff", 0.5f);
+            _grassSideOverlayMaterial.EnableKeyword("_ALPHATEST_ON");
+            _grassSideOverlayMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest; // after opaque dirt
+        }
+    }
+
+    // Public accessor for chunk mesh builder
+    public Material GetBlockMaterial(BlockType t)
+    {
+        return blockMaterials != null ? blockMaterials[(int)t] : null;
+    }
+
+    // Returns the material to use for a particular face of a block.
+    // faceIndex matches ChunkMeshBuilder's order: 0=+X,1=-X,2=+Y(top),3=-Y(bottom),4=+Z,5=-Z
+    public Material GetFaceMaterial(BlockType t, int faceIndex)
+    {
+        if (t != BlockType.Grass)
+        {
+            return GetBlockMaterial(t);
+        }
+        // Grass: top uses grassTexture, bottom uses dirt, sides use grassSide
+        if (faceIndex == 2) // +Y top
+        {
+            return GetBlockMaterial(BlockType.Grass);
+        }
+        if (faceIndex == 3) // -Y bottom
+        {
+            return GetBlockMaterial(BlockType.Dirt);
+        }
+        // sides
+        if (_grassSideMaterial != null)
+        {
+            return _grassSideMaterial;
+        }
+        // Fallback to grass if no side texture available
+        return GetBlockMaterial(BlockType.Grass);
+    }
+
+    // Exposed for mesh builder overlay composition
+    public Material GetGrassSideOverlayMaterial()
+    {
+        return _grassSideOverlayMaterial != null ? _grassSideOverlayMaterial : _grassSideMaterial;
     }
     
     void GenerateWorld()
     {
         worldData = new BlockType[worldWidth, worldHeight, worldDepth];
-        
-        // Simple world generation
-        for (int x = 0; x < worldWidth; x++)
+
+        if (generateSuperflat)
         {
-            for (int z = 0; z < worldDepth; z++)
+            // Clamp layers to available height
+            int stone = Mathf.Max(0, flatStoneLayers);
+            int dirt = Mathf.Max(0, flatDirtLayers);
+            int grass = Mathf.Max(0, flatGrassLayers);
+            int totalLayers = Mathf.Min(worldHeight, stone + dirt + grass);
+            int grassStart = Mathf.Max(0, stone + dirt);
+
+            for (int x = 0; x < worldWidth; x++)
             {
-                for (int y = 0; y < worldHeight; y++)
+                for (int z = 0; z < worldDepth; z++)
                 {
-                    BlockType blockType = BlockType.Air;
-                    
-                    // Simple terrain generation
-                    if (y == 0) blockType = BlockType.Stone; // Bedrock
-                    else if (y < 3) blockType = BlockType.Stone;
-                    else if (y < 6) blockType = BlockType.Dirt;
-                    else if (y == 6) blockType = BlockType.Grass;
-                    else if (y < 4 && Random.Range(0, 100) < 5) blockType = BlockType.Coal;
-                    
-                    worldData[x, y, z] = blockType;
+                    for (int y = 0; y < worldHeight; y++)
+                    {
+                        BlockType blockType = BlockType.Air;
+                        if (y < stone)
+                            blockType = BlockType.Stone; // acting as bedrock for now
+                        else if (y < stone + dirt)
+                            blockType = BlockType.Dirt;
+                        else if (y < totalLayers) // up to grass layers
+                            blockType = BlockType.Grass;
+                        else
+                            blockType = BlockType.Air;
+
+                        worldData[x, y, z] = blockType;
+                    }
                 }
             }
         }
-        
-        // Create visible blocks
+        else
+        {
+            // Legacy simple stacked layers (kept for reference/testing)
+            for (int x = 0; x < worldWidth; x++)
+            {
+                for (int z = 0; z < worldDepth; z++)
+                {
+                    for (int y = 0; y < worldHeight; y++)
+                    {
+                        BlockType blockType = BlockType.Air;
+                        if (y == 0) blockType = BlockType.Stone; // Bedrock substitute
+                        else if (y < 3) blockType = BlockType.Stone;
+                        else if (y < 6) blockType = BlockType.Dirt;
+                        else if (y == 6) blockType = BlockType.Grass;
+                        worldData[x, y, z] = blockType;
+                    }
+                }
+            }
+        }
+
+        // Create visible blocks and spawn plants
         UpdateVisibleBlocks();
-    SpawnPlants();
+        SpawnPlants();
+    }
+
+    // Determine block type at a given world position according to current generation settings
+    public BlockType GenerateBlockTypeAt(Vector3Int worldPos)
+    {
+        if (!generateSuperflat)
+        {
+            // Legacy stack based on Y only (mirrors previous non-superflat path)
+            if (worldPos.y == 0) return BlockType.Stone;
+            if (worldPos.y < 3) return BlockType.Stone;
+            if (worldPos.y < 6) return BlockType.Dirt;
+            if (worldPos.y == 6) return BlockType.Grass;
+            return BlockType.Air;
+        }
+
+        int stone = Mathf.Max(0, flatStoneLayers);
+        int dirt = Mathf.Max(0, flatDirtLayers);
+        int grass = Mathf.Max(0, flatGrassLayers);
+        int totalLayers = stone + dirt + grass;
+        if (worldPos.y < 0 || worldPos.y >= worldHeight) return BlockType.Air;
+        if (worldPos.y < stone) return BlockType.Stone;
+        if (worldPos.y < stone + dirt) return BlockType.Dirt;
+        if (worldPos.y < totalLayers) return BlockType.Grass;
+        return BlockType.Air;
+    }
+
+    // --- Chunk streaming helpers ---
+    private void EnsureChunksRoot()
+    {
+        if (_chunksRoot == null)
+        {
+            var go = new GameObject("Chunks");
+            go.transform.SetParent(this.transform, false);
+            _chunksRoot = go.transform;
+        }
+    }
+
+    private void AutoFindPlayer()
+    {
+        if (player != null) return;
+        var fpc = FindFirstObjectByType<FirstPersonController>(FindObjectsInactive.Exclude);
+        if (fpc != null) { player = fpc.transform; return; }
+        var pc = FindFirstObjectByType<PlayerController>(FindObjectsInactive.Exclude);
+        if (pc != null) { player = pc.transform; return; }
+        var cam = Camera.main; if (cam != null) player = cam.transform;
+    }
+
+    private Vector2Int WorldToChunkCoord(Vector3 position)
+    {
+        int cx = Mathf.FloorToInt(position.x / Mathf.Max(1, chunkSizeX));
+        int cz = Mathf.FloorToInt(position.z / Mathf.Max(1, chunkSizeZ));
+        return new Vector2Int(cx, cz);
+    }
+
+    private Vector2Int WorldToChunkCoord(Vector3Int wpos)
+    {
+        return new Vector2Int(Mathf.FloorToInt((float)wpos.x / Mathf.Max(1, chunkSizeX)), Mathf.FloorToInt((float)wpos.z / Mathf.Max(1, chunkSizeZ)));
+    }
+
+    private void UpdateStreaming(bool force = false)
+    {
+        if (player == null) return;
+        EnsureChunksRoot();
+
+        var center = WorldToChunkCoord(player.position);
+        int r = Mathf.Max(1, viewDistanceChunks);
+
+        // Determine required chunk coords in a square region
+        var needed = new HashSet<Vector2Int>();
+        for (int dz = -r; dz <= r; dz++)
+        {
+            int rem = r - Mathf.Abs(dz);
+            for (int dx = -rem; dx <= rem; dx++)
+            {
+                needed.Add(new Vector2Int(center.x + dx, center.y + dz));
+            }
+        }
+
+        // Unload chunks not needed
+        var toUnload = new List<Vector2Int>();
+        foreach (var kv in _chunks)
+        {
+            if (!needed.Contains(kv.Key)) toUnload.Add(kv.Key);
+        }
+        foreach (var c in toUnload)
+        {
+            // Persist edits before unloading
+            if (enableChunkPersistence) SaveChunkToDisk(c);
+            _chunks[c].Unload(this);
+            _chunks.Remove(c);
+        }
+
+        // Enqueue missing chunks for background loading
+        foreach (var c in needed)
+        {
+            if (_chunks.ContainsKey(c) || _loading.Contains(c) || _queued.Contains(c)) continue;
+            _pendingLoads.Enqueue(c);
+            _queued.Add(c);
+        }
+    }
+
+    private IEnumerator LoadChunkRoutine(Vector2Int coord)
+    {
+    // Create chunk and generate data with small yields to avoid spikes
+        var chunk = new WorldGeneration.Chunks.Chunk(coord, chunkSizeX, worldHeight, chunkSizeZ, _chunksRoot);
+
+        // Generate data with coarse yields: iterate Y up to useful layers only
+        int stone = Mathf.Max(0, flatStoneLayers);
+        int dirt = Mathf.Max(0, flatDirtLayers);
+        int grass = Mathf.Max(0, flatGrassLayers);
+        int usefulY = Mathf.Min(worldHeight, stone + dirt + grass);
+        usefulY = Mathf.Max(1, usefulY);
+
+        for (int lx = 0; lx < chunkSizeX; lx++)
+        {
+            for (int lz = 0; lz < chunkSizeZ; lz++)
+            {
+                for (int ly = 0; ly < usefulY; ly++)
+                {
+                    var wp = new Vector3Int(coord.x * chunkSizeX + lx, ly, coord.y * chunkSizeZ + lz);
+                    var t = GenerateBlockTypeAt(wp);
+                    chunk.SetLocal(lx, ly, lz, t);
+                }
+            }
+            if ((lx & 3) == 0) yield return null; // yield every few columns
+        }
+
+        // Apply persisted edits (disk then memory)
+        if (enableChunkPersistence)
+        {
+            LoadChunkFromDiskInto(coord, chunk);
+            if (_chunkEdits.TryGetValue(coord, out var edits))
+            {
+                foreach (var kv in edits)
+                {
+                    var lp = chunk.WorldToLocal(kv.Key);
+                    if (lp.x >= 0 && lp.x < chunk.sizeX && lp.y >= 0 && lp.y < chunk.sizeY && lp.z >= 0 && lp.z < chunk.sizeZ)
+                    {
+                        chunk.SetLocal(lp.x, lp.y, lp.z, kv.Value);
+                    }
+                }
+            }
+        }
+
+    // Register chunk early so GetBlockType works during spawning logic
+    _chunks[coord] = chunk;
+
+    if (useChunkMeshing)
+        {
+            // Use reflection to avoid compile-order/type resolution issues
+            var chunkType = ResolveTypeByName("WorldGeneration.Chunks.Chunk");
+            var builderType = ResolveTypeByName("WorldGeneration.Chunks.ChunkMeshBuilder");
+            if (builderType != null)
+            {
+                var build = builderType.GetMethod(
+                    "BuildMesh",
+                    new System.Type[] { typeof(WorldGenerator), chunkType, typeof(bool) }
+                );
+                if (build != null)
+                {
+                    build.Invoke(null, new object[] { this, chunk, addChunkCollider });
+                }
+            }
+
+            // Spawn plants on exposed grass even in meshing mode (use chunk-local data)
+            for (int lx = 0; lx < chunkSizeX; lx++)
+            {
+                for (int lz = 0; lz < chunkSizeZ; lz++)
+                {
+                    for (int ly = 1; ly < usefulY; ly++)
+                    {
+                        var t = chunk.GetLocal(lx, ly, lz);
+                        var tAbove = chunk.GetLocal(lx, ly + 1, lz);
+                        if (t == BlockType.Grass && tAbove == BlockType.Air)
+                        {
+                            var wp = new Vector3Int(coord.x * chunkSizeX + lx, ly, coord.y * chunkSizeZ + lz);
+                            TrySpawnPlantClusterAt(wp, chunk.parent);
+                        }
+                    }
+                }
+                if ((lx & 3) == 0) yield return null;
+            }
+        }
+        else
+        {
+            // Build visible with yields (GameObject per block)
+            for (int lx = 0; lx < chunkSizeX; lx++)
+            {
+                for (int ly = 0; ly < usefulY; ly++)
+                {
+                    for (int lz = 0; lz < chunkSizeZ; lz++)
+                    {
+                        var t = chunk.GetLocal(lx, ly, lz);
+                        if (t == BlockType.Air) continue;
+                        var wp = new Vector3Int(coord.x * chunkSizeX + lx, ly, coord.y * chunkSizeZ + lz);
+                        if (ShouldRenderBlock(wp.x, wp.y, wp.z))
+                        {
+                            CreateBlock(wp, t, chunk.parent);
+                        }
+                    }
+                }
+                if ((lx & 3) == 0) yield return null; // yield periodically
+            }
+
+            // Spawn plants on exposed grass; coarse pass with yields
+            for (int lx = 0; lx < chunkSizeX; lx++)
+            {
+                for (int lz = 0; lz < chunkSizeZ; lz++)
+                {
+                    for (int ly = 1; ly < usefulY; ly++)
+                    {
+                        var wp = new Vector3Int(coord.x * chunkSizeX + lx, ly, coord.y * chunkSizeZ + lz);
+                        if (GetBlockType(wp) == BlockType.Grass && GetBlockType(wp + Vector3Int.up) == BlockType.Air)
+                        {
+                            if (ShouldRenderBlock(wp.x, wp.y, wp.z))
+                            {
+                                TrySpawnPlantClusterAt(wp, chunk.parent);
+                            }
+                        }
+                    }
+                }
+                if ((lx & 3) == 0) yield return null;
+            }
+        }
+
+    _loading.Remove(coord);
     }
     
     void UpdateVisibleBlocks()
@@ -270,14 +687,15 @@ public class WorldGenerator : MonoBehaviour
                                     var parent = new GameObject($"Plants ({x},{y+1},{z})");
                                     parent.transform.parent = this.transform;
                                     // place on exact top face center using renderer bounds if available
-                                    Vector3 placePos = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
+                    // Default: stand just above the top face of the grass block
+                    Vector3 placePos = new Vector3(x + 0.5f, y + 1.001f, z + 0.5f);
                                     if (blockObjects.TryGetValue(new Vector3Int(x, y, z), out var grassGo))
                                     {
                                         var rend = grassGo.GetComponent<Renderer>();
                                         if (rend != null)
                                         {
                                             var b = rend.bounds;
-                                            placePos = new Vector3(b.center.x, b.max.y + 0.001f, b.center.z);
+                        placePos = new Vector3(b.center.x, b.max.y + 0.001f, b.center.z);
                                         }
                                     }
                                     parent.transform.position = placePos;
@@ -293,12 +711,12 @@ public class WorldGenerator : MonoBehaviour
         }
     }
 
-    bool HasAnyPlantTextures()
+    public bool HasAnyPlantTextures()
     {
         foreach (var t in plantTextures) if (t != null) return true; return false;
     }
     
-    bool ShouldRenderBlock(int x, int y, int z)
+    public bool ShouldRenderBlock(int x, int y, int z)
     {
         // Check if block has at least one exposed face
         Vector3Int[] directions = {
@@ -321,12 +739,20 @@ public class WorldGenerator : MonoBehaviour
     
     bool IsOutOfBounds(Vector3Int pos)
     {
-        return pos.x < 0 || pos.x >= worldWidth ||
-               pos.y < 0 || pos.y >= worldHeight ||
-               pos.z < 0 || pos.z >= worldDepth;
+        if (useChunkStreaming)
+        {
+            // Infinite world horizontally; only clamp vertically
+            return pos.y < 0 || pos.y >= worldHeight;
+        }
+        else
+        {
+            return pos.x < 0 || pos.x >= worldWidth ||
+                   pos.y < 0 || pos.y >= worldHeight ||
+                   pos.z < 0 || pos.z >= worldDepth;
+        }
     }
     
-    void CreateBlock(Vector3Int position, BlockType blockType)
+    public void CreateBlock(Vector3Int position, BlockType blockType)
     {
         if (blockPrefab == null) return;
         
@@ -385,6 +811,65 @@ public class WorldGenerator : MonoBehaviour
         
         blockObjects[position] = block;
     }
+
+    // Overload to allow parenting under a chunk parent
+    public void CreateBlock(Vector3Int position, BlockType blockType, Transform parentOverride)
+    {
+        if (blockPrefab == null) return;
+
+        Transform p = parentOverride != null ? parentOverride : this.transform;
+        GameObject block = Instantiate(blockPrefab, position, Quaternion.identity, p);
+        block.name = $"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})";
+
+        // Apply material with position-based variation
+        Renderer renderer = block.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            if (blockType == BlockType.Grass)
+            {
+                var type = ResolveTypeByName("GrassBlockRenderer");
+                if (type != null)
+                {
+                    var comp = block.GetComponent(type);
+                    if (comp == null) comp = block.AddComponent(type);
+                    var apply = type.GetMethod("Apply", new System.Type[] { typeof(WorldGenerator) });
+                    if (apply != null)
+                    {
+                        apply.Invoke(comp, new object[] { this });
+                    }
+                }
+                else
+                {
+                    Material baseMaterial = blockMaterials[(int)blockType];
+                    if (baseMaterial != null)
+                    {
+                        Material instanceMaterial = CreateVariationMaterial(baseMaterial, position);
+                        renderer.material = instanceMaterial;
+                    }
+                }
+            }
+            else
+            {
+                Material baseMaterial = blockMaterials[(int)blockType];
+                if (baseMaterial != null)
+                {
+                    Material instanceMaterial = CreateVariationMaterial(baseMaterial, position);
+                    renderer.material = instanceMaterial;
+                }
+            }
+        }
+
+        // Add BlockInfo component
+        BlockInfo blockInfo = block.GetComponent<BlockInfo>();
+        if (blockInfo == null)
+        {
+            blockInfo = block.AddComponent<BlockInfo>();
+        }
+        blockInfo.blockType = blockType;
+        blockInfo.position = position;
+
+        blockObjects[position] = block;
+    }
     
     Material CreateVariationMaterial(Material baseMaterial, Vector3Int position)
     {
@@ -419,15 +904,51 @@ public class WorldGenerator : MonoBehaviour
     
     public BlockType GetBlockType(Vector3Int position)
     {
-        if (IsOutOfBounds(position)) return BlockType.Air;
-        return worldData[position.x, position.y, position.z];
+        if (useChunkStreaming)
+        {
+            if (IsOutOfBounds(position)) return BlockType.Air;
+            var cc = WorldToChunkCoord(position);
+            if (_chunks.TryGetValue(cc, out var chunk))
+            {
+                var lp = chunk.WorldToLocal(position);
+                return chunk.GetLocal(lp.x, lp.y, lp.z);
+            }
+            // Not loaded: treat as Air for visibility; if needed, could compute procedural type
+            return BlockType.Air;
+        }
+        else
+        {
+            if (IsOutOfBounds(position)) return BlockType.Air;
+            return worldData[position.x, position.y, position.z];
+        }
     }
     
     public bool PlaceBlock(Vector3Int position, BlockType blockType)
     {
         if (IsOutOfBounds(position)) return false;
-        
-        worldData[position.x, position.y, position.z] = blockType;
+
+        if (useChunkStreaming)
+        {
+            var cc = WorldToChunkCoord(position);
+            if (!_chunks.TryGetValue(cc, out var chunk))
+            {
+                // Load the chunk on-demand
+                chunk = new WorldGeneration.Chunks.Chunk(cc, chunkSizeX, worldHeight, chunkSizeZ, _chunksRoot);
+                chunk.GenerateSuperflat(this);
+                _chunks[cc] = chunk;
+            }
+            var lp = chunk.WorldToLocal(position);
+            chunk.SetLocal(lp.x, lp.y, lp.z, blockType);
+            if (enableChunkPersistence)
+            {
+                if (!_chunkEdits.TryGetValue(cc, out var map)) { map = new Dictionary<Vector3Int, BlockType>(); _chunkEdits[cc] = map; }
+                map[position] = blockType;
+            }
+        }
+        else
+        {
+            worldData[position.x, position.y, position.z] = blockType;
+        }
 
         // If a block is placed where a plant currently exists, remove the plant at that cell
         if (blockType != BlockType.Air)
@@ -456,7 +977,25 @@ public class WorldGenerator : MonoBehaviour
             var below = position + Vector3Int.down;
             if (!IsOutOfBounds(below) && GetBlockType(below) == BlockType.Grass)
             {
-                worldData[below.x, below.y, below.z] = BlockType.Dirt;
+                if (useChunkStreaming)
+                {
+                    var ccBelow = WorldToChunkCoord(below);
+                    if (_chunks.TryGetValue(ccBelow, out var chBelow))
+                    {
+                        var lpBelow = chBelow.WorldToLocal(below);
+                        chBelow.SetLocal(lpBelow.x, lpBelow.y, lpBelow.z, BlockType.Dirt);
+                        if (enableChunkPersistence)
+                        {
+                            var ccb = WorldToChunkCoord(below);
+                            if (!_chunkEdits.TryGetValue(ccb, out var mapBelow)) { mapBelow = new Dictionary<Vector3Int, BlockType>(); _chunkEdits[ccb] = mapBelow; }
+                            mapBelow[below] = BlockType.Dirt;
+                        }
+                    }
+                }
+                else
+                {
+                    worldData[below.x, below.y, below.z] = BlockType.Dirt;
+                }
                 // Remove any plant above that grass cell
                 var aboveBelow = below + Vector3Int.up;
                 if (plantObjects.TryGetValue(aboveBelow, out var plantAtAboveBelow))
@@ -466,12 +1005,15 @@ public class WorldGenerator : MonoBehaviour
                 }
                 _scheduledPlantCells.Remove(below);
                 // Refresh visuals for the converted block
-                if (blockObjects.ContainsKey(below))
+                if (!useChunkStreaming || !useChunkMeshing)
                 {
-                    Destroy(blockObjects[below]);
-                    blockObjects.Remove(below);
+                    if (blockObjects.ContainsKey(below))
+                    {
+                        Destroy(blockObjects[below]);
+                        blockObjects.Remove(below);
+                    }
+                    CreateBlock(below, BlockType.Dirt);
                 }
-                CreateBlock(below, BlockType.Dirt);
             }
             // If covering exposed Dirt, cancel growth
             if (!IsOutOfBounds(below) && GetBlockType(below) == BlockType.Dirt)
@@ -480,7 +1022,7 @@ public class WorldGenerator : MonoBehaviour
             }
         }
         
-        if (blockType == BlockType.Air)
+    if (blockType == BlockType.Air)
         {
             // Remove block
             if (blockObjects.ContainsKey(position))
@@ -490,15 +1032,32 @@ public class WorldGenerator : MonoBehaviour
             }
             // If removing a block exposes Dirt below, schedule grass growth
             var belowIfAny = position + Vector3Int.down;
-            if (!IsOutOfBounds(belowIfAny) && GetBlockType(belowIfAny) == BlockType.Dirt && GetBlockType(position) == BlockType.Air)
+            if (!IsOutOfBounds(belowIfAny) && GetBlockType(belowIfAny) == BlockType.Dirt)
             {
-                ScheduleGrassGrowth(belowIfAny, dirtToGrassDelayTicks);
+                // The cell we just made Air exposes 'belowIfAny' to sky
+                if (GetBlockType(position) == BlockType.Air)
+                {
+                    ScheduleGrassGrowth(belowIfAny, dirtToGrassDelayTicks);
+                }
             }
         }
         else
         {
             // Place block
-            CreateBlock(position, blockType);
+            if (useChunkStreaming)
+            {
+                if (!useChunkMeshing)
+                {
+                    var cc = WorldToChunkCoord(position);
+                    var parent = _chunks.TryGetValue(cc, out var ch) ? ch.parent : this.transform;
+                    CreateBlock(position, blockType, parent);
+                }
+                // If meshing, we'll rebuild chunk mesh below
+            }
+            else
+            {
+                CreateBlock(position, blockType);
+            }
         }
 
         // If we placed Grass with Air above, schedule delayed plant spawn at this position
@@ -509,16 +1068,66 @@ public class WorldGenerator : MonoBehaviour
                 SchedulePlantRespawn(position, newGrassPlantDelayTicks);
             }
         }
+        // Side neighbors: if any Dirt neighbor is now exposed (air above it), schedule growth
+        if (blockType != BlockType.Air)
+        {
+            Vector3Int[] lateral = { Vector3Int.left, Vector3Int.right, Vector3Int.forward, Vector3Int.back };
+            foreach (var d in lateral)
+            {
+                var n = position + d;
+                if (!IsOutOfBounds(n) && GetBlockType(n) == BlockType.Dirt && GetBlockType(n + Vector3Int.up) == BlockType.Air)
+                {
+                    ScheduleGrassGrowth(n, dirtToGrassDelayTicks);
+                }
+            }
+        }
+        // If we placed Dirt with Air above, schedule grass growth for this cell
+        if (blockType == BlockType.Dirt)
+        {
+            if (GetBlockType(above) == BlockType.Air)
+            {
+                ScheduleGrassGrowth(position, dirtToGrassDelayTicks);
+            }
+        }
         
-        // Update neighboring blocks visibility
-        UpdateNeighboringBlocks(position);
+    // Update neighboring blocks visibility / rebuild meshes as needed
+    UpdateNeighboringBlocks(position);
         
         
         return true;
     }
+
+    private void OnApplicationQuit()
+    {
+        if (!enableChunkPersistence) return;
+        // Save every loaded chunk's edits to disk
+        foreach (var kv in _chunks)
+        {
+            SaveChunkToDisk(kv.Key);
+        }
+    }
     
     void UpdateNeighboringBlocks(Vector3Int position)
     {
+        if (useChunkStreaming)
+        {
+            if (useChunkMeshing)
+            {
+                // Rebuild the chunk containing this cell and any neighboring chunk across boundaries
+                var cc = WorldToChunkCoord(position);
+                RebuildChunkMeshAt(cc);
+                Vector2Int[] neighborOffsets = { new Vector2Int(1,0), new Vector2Int(-1,0), new Vector2Int(0,1), new Vector2Int(0,-1) };
+                foreach (var off in neighborOffsets)
+                {
+                    var nwp = position + new Vector3Int(off.x * chunkSizeX, 0, off.y * chunkSizeZ);
+                    var ncc = WorldToChunkCoord(nwp);
+                    if (ncc != cc) RebuildChunkMeshAt(ncc);
+                }
+                return;
+            }
+            // Streaming without meshing: operate on per-block GameObjects under chunk parents
+        }
+
         Vector3Int[] directions = {
             Vector3Int.up, Vector3Int.down,
             Vector3Int.left, Vector3Int.right,
@@ -530,7 +1139,7 @@ public class WorldGenerator : MonoBehaviour
             Vector3Int neighbor = position + dir;
             if (!IsOutOfBounds(neighbor))
             {
-                BlockType blockType = worldData[neighbor.x, neighbor.y, neighbor.z];
+                BlockType blockType = GetBlockType(neighbor);
                 
                 if (blockType != BlockType.Air)
                 {
@@ -538,7 +1147,16 @@ public class WorldGenerator : MonoBehaviour
                     {
                         if (!blockObjects.ContainsKey(neighbor))
                         {
-                            CreateBlock(neighbor, blockType);
+                            if (useChunkStreaming)
+                            {
+                                var cc = WorldToChunkCoord(neighbor);
+                                var parent = _chunks.TryGetValue(cc, out var ch) ? ch.parent : this.transform;
+                                CreateBlock(neighbor, blockType, parent);
+                            }
+                            else
+                            {
+                                CreateBlock(neighbor, blockType);
+                            }
                         }
                         // If this is grass with air above, schedule a delayed plant spawn (on-demand)
                         if (blockType == BlockType.Grass && GetBlockType(neighbor + Vector3Int.up) == BlockType.Air)
@@ -581,6 +1199,82 @@ public class WorldGenerator : MonoBehaviour
         }
     }
 
+    private void RebuildChunkMeshAt(Vector2Int coord)
+    {
+        if (!_chunks.TryGetValue(coord, out var chunk)) return;
+        var builderType = ResolveTypeByName("WorldGeneration.Chunks.ChunkMeshBuilder");
+        var chunkType = ResolveTypeByName("WorldGeneration.Chunks.Chunk");
+        if (builderType == null || chunkType == null) return;
+        var build = builderType.GetMethod("BuildMesh", new System.Type[] { typeof(WorldGenerator), chunkType, typeof(bool) });
+        if (build == null) return;
+        build.Invoke(null, new object[] { this, chunk, addChunkCollider });
+    }
+
+    // --- Startup player gate ---
+    private System.Collections.IEnumerator StartupPlayerGate()
+    {
+        // If no player, try to find again; if still none, there's nothing to gate.
+        if (player == null) AutoFindPlayer();
+        if (player == null) yield break;
+
+        // Compute center chunk from current player position before disabling them
+        var center = WorldToChunkCoord(player.position);
+
+        // Disable player GameObject during initial chunk build
+        var playerGO = player.gameObject;
+        bool wasActive = playerGO.activeSelf;
+        if (wasActive) playerGO.SetActive(false);
+
+        // Wait until the center chunk is loaded and meshed
+        while (true)
+        {
+            if (_chunks.TryGetValue(center, out var ch) && ch != null && ch.parent != null)
+            {
+                var mf = ch.parent.GetComponent<MeshFilter>();
+                if (mf != null && mf.sharedMesh != null)
+                {
+                    break;
+                }
+            }
+            yield return null;
+        }
+
+        // Optionally snap player to ground
+        if (snapPlayerToGroundOnSpawn)
+        {
+            var p = player.position;
+            int x = Mathf.FloorToInt(p.x);
+            int z = Mathf.FloorToInt(p.z);
+            int gy = FindHighestSolidYAt(x, z);
+            if (gy >= 0)
+            {
+                // place a bit above ground to avoid collisions
+                player.position = new Vector3(p.x, gy + 1.6f, p.z);
+            }
+        }
+
+        if (wasActive) playerGO.SetActive(true);
+    }
+
+    private int FindHighestSolidYAt(int x, int z)
+    {
+        for (int y = worldHeight - 1; y >= 0; y--)
+        {
+            if (GetBlockType(new Vector3Int(x, y, z)) != BlockType.Air)
+                return y;
+        }
+        // Fallback to superflat ground if none found
+        if (generateSuperflat)
+        {
+            int stone = Mathf.Max(0, flatStoneLayers);
+            int dirt = Mathf.Max(0, flatDirtLayers);
+            int grass = Mathf.Max(0, flatGrassLayers);
+            int totalLayers = Mathf.Min(worldHeight, stone + dirt + grass);
+            return totalLayers - 1;
+        }
+        return -1;
+    }
+
     // Public helper for PlantBillboard and internal cleanup
     public void RemovePlantAt(Vector3Int cell)
     {
@@ -594,6 +1288,68 @@ public class WorldGenerator : MonoBehaviour
         }
     }
 
+    // ---------- Persistence helpers ----------
+    private string GetSaveFolderPath()
+    {
+        return System.IO.Path.Combine(Application.persistentDataPath, saveFolderName);
+    }
+
+    private string GetChunkSavePath(Vector2Int coord)
+    {
+        return System.IO.Path.Combine(GetSaveFolderPath(), $"chunk_{coord.x}_{coord.y}.json");
+    }
+
+    private void EnsureSaveFolder()
+    {
+        var dir = GetSaveFolderPath();
+        if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+    }
+
+    private void SaveChunkToDisk(Vector2Int coord)
+    {
+        if (!enableChunkPersistence) return;
+        if (!_chunkEdits.TryGetValue(coord, out var map) || map.Count == 0) return;
+        EnsureSaveFolder();
+    var data = new ChunkSaveDTO
+        {
+            cx = coord.x,
+            cz = coord.y,
+            sizeX = chunkSizeX,
+            sizeY = worldHeight,
+            sizeZ = chunkSizeZ,
+        changes = new ChangedCellDTO[map.Count]
+        };
+        int i = 0;
+        foreach (var kv in map)
+        {
+        data.changes[i++] = new ChangedCellDTO { x = kv.Key.x, y = kv.Key.y, z = kv.Key.z, t = (int)kv.Value };
+        }
+        var json = JsonUtility.ToJson(data, false);
+        System.IO.File.WriteAllText(GetChunkSavePath(coord), json);
+    }
+
+    private void LoadChunkFromDiskInto(Vector2Int coord, WorldGeneration.Chunks.Chunk chunk)
+    {
+        if (!enableChunkPersistence) return;
+        var path = GetChunkSavePath(coord);
+        if (!System.IO.File.Exists(path)) return;
+        var json = System.IO.File.ReadAllText(path);
+    var data = JsonUtility.FromJson<ChunkSaveDTO>(json);
+        if (data?.changes == null) return;
+        foreach (var c in data.changes)
+        {
+            var wp = new Vector3Int(c.x, c.y, c.z);
+            var lp = chunk.WorldToLocal(wp);
+            if (lp.x >= 0 && lp.x < chunk.sizeX && lp.y >= 0 && lp.y < chunk.sizeY && lp.z >= 0 && lp.z < chunk.sizeZ)
+            {
+        chunk.SetLocal(lp.x, lp.y, lp.z, (BlockType)c.t);
+            }
+        }
+        if (!_chunkEdits.ContainsKey(coord)) _chunkEdits[coord] = new Dictionary<Vector3Int, BlockType>();
+        var map = _chunkEdits[coord];
+    foreach (var c in data.changes) map[new Vector3Int(c.x, c.y, c.z)] = (BlockType)c.t;
+    }
+
     // --- Tick scheduling and helpers ---
     public void SchedulePlantRespawn(Vector3Int grassCell, int delayTicks)
     {
@@ -601,7 +1357,17 @@ public class WorldGenerator : MonoBehaviour
         var above = grassCell + Vector3Int.up;
         if (GetBlockType(grassCell) != BlockType.Grass) return;
         if (GetBlockType(above) != BlockType.Air) return;
-        if (plantObjects.ContainsKey(above)) return;
+        if (plantObjects.TryGetValue(above, out var obj))
+        {
+            if (obj == null)
+            {
+                plantObjects.Remove(above);
+            }
+            else
+            {
+                return;
+            }
+        }
         if (_scheduledPlantCells.Contains(grassCell)) return;
         _scheduledPlantCells.Add(grassCell);
         _tickQueue.Add(new TickAction { dueTick = _currentTick + Mathf.Max(1, delayTicks), type = TA_PlantRespawn, cell = grassCell });
@@ -636,13 +1402,44 @@ public class WorldGenerator : MonoBehaviour
                 _scheduledGrassCells.Remove(ta.cell);
                 if (GetBlockType(ta.cell) == BlockType.Dirt && GetBlockType(ta.cell + Vector3Int.up) == BlockType.Air)
                 {
-                    worldData[ta.cell.x, ta.cell.y, ta.cell.z] = BlockType.Grass;
-                    if (blockObjects.ContainsKey(ta.cell))
+                    if (useChunkStreaming)
                     {
-                        Destroy(blockObjects[ta.cell]);
-                        blockObjects.Remove(ta.cell);
+                        var cc = WorldToChunkCoord(ta.cell);
+                        if (_chunks.TryGetValue(cc, out var ch))
+                        {
+                            var lp = ch.WorldToLocal(ta.cell);
+                            ch.SetLocal(lp.x, lp.y, lp.z, BlockType.Grass);
+                            if (enableChunkPersistence)
+                            {
+                                var ccg = WorldToChunkCoord(ta.cell);
+                                if (!_chunkEdits.TryGetValue(ccg, out var mapG)) { mapG = new Dictionary<Vector3Int, BlockType>(); _chunkEdits[ccg] = mapG; }
+                                mapG[ta.cell] = BlockType.Grass;
+                            }
+                            if (useChunkMeshing)
+                            {
+                                RebuildChunkMeshAt(cc);
+                            }
+                            else
+                            {
+                                if (blockObjects.ContainsKey(ta.cell))
+                                {
+                                    Destroy(blockObjects[ta.cell]);
+                                    blockObjects.Remove(ta.cell);
+                                }
+                                CreateBlock(ta.cell, BlockType.Grass, ch.parent);
+                            }
+                        }
                     }
-                    CreateBlock(ta.cell, BlockType.Grass);
+                    else
+                    {
+                        worldData[ta.cell.x, ta.cell.y, ta.cell.z] = BlockType.Grass;
+                        if (blockObjects.ContainsKey(ta.cell))
+                        {
+                            Destroy(blockObjects[ta.cell]);
+                            blockObjects.Remove(ta.cell);
+                        }
+                        CreateBlock(ta.cell, BlockType.Grass);
+                    }
                     // Plants should appear later on new grass
                     SchedulePlantRespawn(ta.cell, newGrassPlantDelayTicks);
                     UpdateNeighboringBlocks(ta.cell);
@@ -651,82 +1448,206 @@ public class WorldGenerator : MonoBehaviour
         }
     }
 
-    private void TrySpawnPlantClusterAt(Vector3Int grassCell)
+    public void TrySpawnPlantClusterAt(Vector3Int grassCell, Transform parentOverride = null)
     {
         if (IsOutOfBounds(grassCell)) return;
         var above = grassCell + Vector3Int.up;
         if (GetBlockType(grassCell) != BlockType.Grass) return;
         if (GetBlockType(above) != BlockType.Air) return;
-        if (plantObjects.ContainsKey(above)) return;
+        if (plantObjects.TryGetValue(above, out var existing))
+        {
+            // If an entry exists but the object was already destroyed (Unity-null), clean it up
+            if (existing == null)
+            {
+                plantObjects.Remove(above);
+            }
+            else
+            {
+                return;
+            }
+        }
         if (!ShouldRenderBlock(grassCell.x, grassCell.y, grassCell.z)) return;
         if (!HasAnyPlantTextures()) return;
 
-        System.Random rng = new System.Random(grassCell.GetHashCode() ^ (_currentTick * 997));
-        float desired = Mathf.Max(0f, plantDensity * 0.5f);
+    System.Random rng = new System.Random(grassCell.GetHashCode() ^ (_currentTick * 997));
+    float desired = Mathf.Max(0f, plantDensity); // use configured density directly
         int count = Mathf.FloorToInt(desired);
         double remainder = desired - count;
         if (rng.NextDouble() < remainder) count++;
         if (count <= 0) return;
 
         var parent = new GameObject($"Plants ({grassCell.x},{grassCell.y+1},{grassCell.z})");
-        parent.transform.parent = this.transform;
-        Vector3 placePos = new Vector3(grassCell.x + 0.5f, grassCell.y + 0.5f, grassCell.z + 0.5f);
+        parent.transform.parent = parentOverride != null ? parentOverride : this.transform;
+    Vector3 placePos = new Vector3(grassCell.x + 0.5f, grassCell.y + 1.001f, grassCell.z + 0.5f);
         if (blockObjects.TryGetValue(grassCell, out var grassGo))
         {
             var rend = grassGo.GetComponent<Renderer>();
             if (rend != null)
             {
                 var b = rend.bounds;
-                placePos = new Vector3(b.center.x, b.max.y + 0.001f, b.center.z);
+        placePos = new Vector3(b.center.x, b.max.y + 0.001f, b.center.z);
             }
+        }
+        // Snap to actual surface if a collider exists under the spawn point to avoid intersection
+        var rayOrigin = placePos + new Vector3(0, 2f, 0);
+        if (Physics.Raycast(rayOrigin, Vector3.down, out var hit, 4f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            placePos = new Vector3(placePos.x, hit.point.y + 0.001f, placePos.z);
         }
         parent.transform.position = placePos;
         SpawnPlantChildrenIntoParent(parent, grassCell, count, rng);
         plantObjects[above] = parent;
     }
 
+    // Called by Chunk to unload its rendered cells safely
+    public void UnloadCells(IEnumerable<Vector3Int> worldCells, GameObject chunkParent)
+    {
+        foreach (var cell in worldCells)
+        {
+            if (blockObjects.TryGetValue(cell, out var go) && go != null) Destroy(go);
+            blockObjects.Remove(cell);
+            var above = cell + Vector3Int.up;
+            if (plantObjects.TryGetValue(above, out var plant) && plant != null) Destroy(plant);
+            plantObjects.Remove(above);
+        }
+        // In meshed mode, renderedCells may be empty; sweep plantObjects by chunk area to remove stale entries
+        if (chunkParent != null)
+        {
+            var basePos = chunkParent.transform.position;
+            int baseX = Mathf.FloorToInt(basePos.x);
+            int baseZ = Mathf.FloorToInt(basePos.z);
+            int maxX = baseX + chunkSizeX;
+            int maxZ = baseZ + chunkSizeZ;
+            var toRemove = new List<Vector3Int>();
+            foreach (var kv in plantObjects)
+            {
+                var p = kv.Key;
+                if (p.x >= baseX && p.x < maxX && p.z >= baseZ && p.z < maxZ)
+                {
+                    if (kv.Value != null) Destroy(kv.Value);
+                    toRemove.Add(p);
+                }
+            }
+            foreach (var k in toRemove) plantObjects.Remove(k);
+            Destroy(chunkParent);
+        }
+    }
+
     private void SpawnPlantChildrenIntoParent(GameObject parent, Vector3Int grassCell, int count, System.Random rng)
     {
+        // Cap quads per cluster for performance
+        count = Mathf.Clamp(count, 1, Mathf.Max(1, plantClusterMaxQuads));
+
+        // Pick one texture for the whole cluster (weighted), to use a single shared material
         int[] weights = new int[] { 40, 25, 15, 9, 6, 3, 1, 1 };
         int total = 0; foreach (var w in weights) total += w;
-        var pbt = ResolveTypeByName("PlantBillboard");
+        int pick = rng.Next(total);
+        int idx = 0; int acc = 0;
+        for (; idx < weights.Length; idx++) { acc += weights[idx]; if (pick < acc) break; }
+        idx = Mathf.Clamp(idx, 0, plantTextures.Length - 1);
+        var texture = plantTextures[idx];
+        if (texture == null)
+        {
+            // fallback to first available
+            for (int i = 0; i < plantTextures.Length; i++) if (plantTextures[i] != null) { texture = plantTextures[i]; break; }
+            if (texture == null) return;
+        }
+
+        // Build a combined mesh with 'count' crossed-quads
+        var mf = parent.AddComponent<MeshFilter>();
+        var mr = parent.AddComponent<MeshRenderer>();
+        var mesh = new Mesh { name = $"PlantCluster_{grassCell.x}_{grassCell.y}_{grassCell.z}" };
+
+        var vertices = new List<Vector3>(count * 8);
+        var uvs = new List<Vector2>(count * 8);
+        var tris = new List<int>(count * 24);
+
+        float maxH = 0.0f;
         for (int i = 0; i < count; i++)
         {
-            int pick = rng.Next(total);
-            int idx = 0; int acc = 0;
-            for (; idx < weights.Length; idx++) { acc += weights[idx]; if (pick < acc) break; }
-            idx = Mathf.Clamp(idx, 0, plantTextures.Length - 1);
-            var tex = plantTextures[idx];
-            if (tex == null) continue;
-
-            var child = new GameObject($"Plant_{idx+1}");
-            child.transform.parent = parent.transform;
+            // Random offset and rotation per crossed-quad set
             float off = 0.18f;
             float ox = (float)(rng.NextDouble()*2 - 1) * off;
             float oz = (float)(rng.NextDouble()*2 - 1) * off;
-            child.transform.localPosition = new Vector3(ox, 0f, oz);
-            child.transform.localRotation = Quaternion.Euler(0f, (float)(rng.NextDouble()*360.0), 0f);
-            child.AddComponent<MeshFilter>();
-            child.AddComponent<MeshRenderer>();
-            // Add collider so player can break plants
-            float h = Mathf.Lerp(0.5f, 1.2f, idx / 7.0f);
-            var col = child.AddComponent<BoxCollider>();
-            col.size = new Vector3(0.6f, h, 0.6f);
-            col.center = new Vector3(0f, 0.01f + h * 0.5f, 0f);
-            col.isTrigger = true; // plants shouldn't block the player
+            float h = Mathf.Lerp(0.6f, 1.2f, (float)rng.NextDouble());
+            maxH = Mathf.Max(maxH, h);
 
-            if (pbt != null)
-            {
-                var comp = child.AddComponent(pbt);
-                var method = pbt.GetMethod("Configure", new System.Type[] { typeof(Texture2D), typeof(float), typeof(float), typeof(float) });
-                if (method != null)
-                {
-                    method.Invoke(comp, new object[] { tex, 0.9f, h, 0.01f });
-                }
-                var fWorld = pbt.GetField("world"); if (fWorld != null) fWorld.SetValue(comp, this);
-                var fSupport = pbt.GetField("supportCell"); if (fSupport != null) fSupport.SetValue(comp, grassCell);
-            }
+            // Two quads centered on origin; we build them aligned (like PlantBillboard) and offset
+            int vStart = vertices.Count;
+            float halfW = 0.45f;
+            float y0 = 0.02f; // small lift to avoid z-fighting/embedding
+            float y1 = h + 0.02f;
+
+            // Quad A (along Z)
+            vertices.Add(new Vector3(-halfW + ox, y0, 0 + oz));
+            vertices.Add(new Vector3( halfW + ox, y0, 0 + oz));
+            vertices.Add(new Vector3( halfW + ox, y1, 0 + oz));
+            vertices.Add(new Vector3(-halfW + ox, y1, 0 + oz));
+            // Quad B (along X)
+            vertices.Add(new Vector3(0 + ox, y0, -halfW + oz));
+            vertices.Add(new Vector3(0 + ox, y0,  halfW + oz));
+            vertices.Add(new Vector3(0 + ox, y1,  halfW + oz));
+            vertices.Add(new Vector3(0 + ox, y1, -halfW + oz));
+
+            // UVs
+            uvs.Add(new Vector2(0,0)); uvs.Add(new Vector2(1,0)); uvs.Add(new Vector2(1,1)); uvs.Add(new Vector2(0,1));
+            uvs.Add(new Vector2(0,0)); uvs.Add(new Vector2(1,0)); uvs.Add(new Vector2(1,1)); uvs.Add(new Vector2(0,1));
+
+            // Triangles (double-sided)
+            // Quad A
+            tris.Add(vStart + 0); tris.Add(vStart + 2); tris.Add(vStart + 1);
+            tris.Add(vStart + 0); tris.Add(vStart + 3); tris.Add(vStart + 2);
+            tris.Add(vStart + 1); tris.Add(vStart + 2); tris.Add(vStart + 0);
+            tris.Add(vStart + 2); tris.Add(vStart + 3); tris.Add(vStart + 0);
+            // Quad B
+            tris.Add(vStart + 4); tris.Add(vStart + 6); tris.Add(vStart + 5);
+            tris.Add(vStart + 4); tris.Add(vStart + 7); tris.Add(vStart + 6);
+            tris.Add(vStart + 5); tris.Add(vStart + 6); tris.Add(vStart + 4);
+            tris.Add(vStart + 6); tris.Add(vStart + 7); tris.Add(vStart + 4);
         }
+
+        mesh.SetVertices(vertices);
+        mesh.SetUVs(0, uvs);
+        mesh.SetTriangles(tris, 0);
+        mesh.RecalculateBounds();
+        mesh.RecalculateNormals();
+        mf.sharedMesh = mesh;
+
+        // Assign shared material (cached by texture)
+        mr.sharedMaterial = GetPlantSharedMaterial(texture);
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.receiveShadows = false;
+
+        // Single trigger collider on the parent to allow interaction
+        var col = parent.AddComponent<BoxCollider>();
+        col.isTrigger = true;
+        float radius = 0.6f; // encompass offsets
+        col.size = new Vector3(radius, Mathf.Max(0.6f, maxH), radius);
+        col.center = new Vector3(0f, 0.01f + col.size.y * 0.5f, 0f);
+    }
+
+    private Material GetPlantSharedMaterial(Texture2D texture)
+    {
+        if (texture == null) return null;
+        if (_plantMaterialCache.TryGetValue(texture, out var mat)) return mat;
+        var shader = Shader.Find("Universal Render Pipeline/Unlit");
+        mat = new Material(shader)
+        {
+            name = $"Plant_Unlit_{texture.name}",
+            color = Color.white,
+            enableInstancing = true
+        };
+        mat.SetTexture("_BaseMap", texture);
+        mat.mainTexture = texture;
+        mat.SetFloat("_AlphaClip", 1f);
+        mat.SetFloat("_Cutoff", 0.5f);
+        mat.SetFloat("_Cull", 0f); // double-sided
+        mat.EnableKeyword("_ALPHATEST_ON");
+        mat.DisableKeyword("_ALPHABLEND_ON");
+        mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
+        _plantMaterialCache[texture] = mat;
+        return mat;
     }
 
     // Utility: find a type by simple name across loaded assemblies
@@ -745,5 +1666,81 @@ public class WorldGenerator : MonoBehaviour
             }
         }
         return null;
+    }
+
+    // Grid raycast using 3D DDA. Returns the first solid block hit and the empty cell just before it.
+    public bool TryVoxelRaycast(Ray ray, float maxDistance, out Vector3Int hitCell, out Vector3Int placeCell, out Vector3 hitNormal)
+    {
+        hitCell = default;
+        placeCell = default;
+        hitNormal = Vector3.zero;
+
+        Vector3 pos = ray.origin;
+        Vector3 dir = ray.direction;
+        if (dir.sqrMagnitude < 1e-8f) return false;
+        dir.Normalize();
+
+        // Current cell is floor of position
+        Vector3Int cell = new Vector3Int(Mathf.FloorToInt(pos.x), Mathf.FloorToInt(pos.y), Mathf.FloorToInt(pos.z));
+        Vector3Int step = new Vector3Int(dir.x > 0 ? 1 : -1, dir.y > 0 ? 1 : -1, dir.z > 0 ? 1 : -1);
+
+        float t = 0f;
+        // Distance to first boundary along each axis
+        float nextBoundaryX = (step.x > 0 ? cell.x + 1 : cell.x) - pos.x;
+        float nextBoundaryY = (step.y > 0 ? cell.y + 1 : cell.y) - pos.y;
+        float nextBoundaryZ = (step.z > 0 ? cell.z + 1 : cell.z) - pos.z;
+        float tMaxX = (Mathf.Abs(dir.x) < 1e-8f) ? float.PositiveInfinity : nextBoundaryX / dir.x;
+        float tMaxY = (Mathf.Abs(dir.y) < 1e-8f) ? float.PositiveInfinity : nextBoundaryY / dir.y;
+        float tMaxZ = (Mathf.Abs(dir.z) < 1e-8f) ? float.PositiveInfinity : nextBoundaryZ / dir.z;
+        if (tMaxX < 0) tMaxX = 0; if (tMaxY < 0) tMaxY = 0; if (tMaxZ < 0) tMaxZ = 0;
+        float tDeltaX = (Mathf.Abs(dir.x) < 1e-8f) ? float.PositiveInfinity : Mathf.Abs(1f / dir.x);
+        float tDeltaY = (Mathf.Abs(dir.y) < 1e-8f) ? float.PositiveInfinity : Mathf.Abs(1f / dir.y);
+        float tDeltaZ = (Mathf.Abs(dir.z) < 1e-8f) ? float.PositiveInfinity : Mathf.Abs(1f / dir.z);
+
+        Vector3Int prevCell = cell;
+        Vector3 lastNormal = Vector3.zero;
+
+        while (t <= maxDistance)
+        {
+            // Step to next cell
+            if (tMaxX < tMaxY && tMaxX < tMaxZ)
+            {
+                prevCell = cell;
+                cell.x += step.x;
+                t = tMaxX;
+                tMaxX += tDeltaX;
+                lastNormal = new Vector3(-step.x, 0, 0); // face normal of the block entered
+            }
+            else if (tMaxY < tMaxZ)
+            {
+                prevCell = cell;
+                cell.y += step.y;
+                t = tMaxY;
+                tMaxY += tDeltaY;
+                lastNormal = new Vector3(0, -step.y, 0);
+            }
+            else
+            {
+                prevCell = cell;
+                cell.z += step.z;
+                t = tMaxZ;
+                tMaxZ += tDeltaZ;
+                lastNormal = new Vector3(0, 0, -step.z);
+            }
+
+            // Stop if out of vertical bounds
+            if (cell.y < 0 || cell.y >= worldHeight) return false;
+
+            // Check for solid block
+            if (GetBlockType(cell) != BlockType.Air)
+            {
+                hitCell = cell;
+                placeCell = prevCell;
+                hitNormal = lastNormal;
+                return true;
+            }
+        }
+
+        return false;
     }
 }
