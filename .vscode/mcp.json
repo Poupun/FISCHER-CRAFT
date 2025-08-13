@@ -1,7 +1,7 @@
 {
   "servers": {
-    "Unity-MCP": {
-      "command": "D:/Unity/TESTINGCRAFT/Library/com.ivanmurzak.unity.mcp.server/bin~/Release/net9.0/com.IvanMurzak.Unity.MCP.Server",
+    "dsf-MCP": {
+      "command": "D:/Unity/test/FISCHER-CRAFT/Library/com.ivanmurzak.unity.mcp.server/bin~/Release/net9.0/com.IvanMurzak.Unity.MCP.Server",
       "args": [
         "--port=60606",
         "--timeout=10000"

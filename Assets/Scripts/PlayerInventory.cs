@@ -36,14 +36,14 @@ public class PlayerInventory : MonoBehaviour
             inventory[i] = new InventorySlot();
         }
         
-        // Add some starting blocks
-        inventory[0] = new InventorySlot(BlockType.Grass, 10);
-        inventory[1] = new InventorySlot(BlockType.Dirt, 10);
-        inventory[2] = new InventorySlot(BlockType.Stone, 10);
-        inventory[3] = new InventorySlot(BlockType.Sand, 10);
-        inventory[4] = new InventorySlot(BlockType.Coal, 5);
+    // Add some starting blocks (no Grass in inventory)
+    inventory[0] = new InventorySlot(BlockType.Dirt, 16);
+    inventory[1] = new InventorySlot(BlockType.Stone, 16);
+    inventory[2] = new InventorySlot(BlockType.Sand, 16);
+    inventory[3] = new InventorySlot(BlockType.Coal, 8);
+    inventory[4] = new InventorySlot(BlockType.Air, 0);
         
-        inventoryUI = FindObjectOfType<InventoryUI>();
+    inventoryUI = FindFirstObjectByType<InventoryUI>(FindObjectsInactive.Exclude);
         if (inventoryUI != null)
         {
             inventoryUI.UpdateInventoryDisplay(inventory, currentSlot);
@@ -124,7 +124,8 @@ public class PlayerInventory : MonoBehaviour
     
     public void AddBlock(BlockType blockType)
     {
-        if (blockType == BlockType.Air) return;
+    if (blockType == BlockType.Air) return;
+    if (blockType == BlockType.Grass) return; // Do not collect Grass as an item
         
         // First, try to add to existing stacks
         for (int i = 0; i < inventorySize; i++)
