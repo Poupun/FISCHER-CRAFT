@@ -40,7 +40,18 @@ public static class PlantAssetCreator
             var def = ScriptableObject.CreateInstance<PlantDefinition>();
             def.name = $"Plant_{tex.name}";
             def.texture = tex;
-            def.weight = Mathf.Max(0.01f, defaultWeight);
+            // Weight mapping based on name: -s (small/common), -m (medium/uncommon), base (rare)
+            string lower = tex.name.ToLowerInvariant();
+            float weight;
+            if (lower.EndsWith("-s") || lower.Contains("plant-s"))
+                weight = 6f; // common
+            else if (lower.EndsWith("-m") || lower.Contains("plant-m"))
+                weight = 2f; // uncommon
+            else if (lower == "plant" || lower.Contains("plant"))
+                weight = 0.7f; // rare
+            else
+                weight = defaultWeight;
+            def.weight = Mathf.Max(0.01f, weight);
             def.width = 0.9f;
             def.heightRange = new Vector2(0.6f, 1.2f);
             def.yOffset = 0.02f;

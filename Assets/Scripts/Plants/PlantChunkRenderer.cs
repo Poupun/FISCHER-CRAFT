@@ -12,28 +12,33 @@ public class PlantChunkRenderer : MonoBehaviour
         public int chunkSizeZ;
         public int worldHeight;
 
-        private readonly Dictionary<Material, List<Vector3>> _verts = new();
-        private readonly Dictionary<Material, List<Vector2>> _uvs = new();
-        private readonly Dictionary<Material, List<int>> _tris = new();
-        private readonly Dictionary<Material, Mesh> _meshes = new();
-        private readonly Dictionary<Material, GameObject> _children = new();
+    private readonly Dictionary<Material, List<Vector3>> _verts = new();
+    private readonly Dictionary<Material, List<Vector2>> _uvs = new();
+    private readonly Dictionary<Material, List<int>> _tris = new();
+    private readonly Dictionary<Material, Mesh> _meshes = new();
+    private readonly Dictionary<Material, GameObject> _children = new();
+    // Per plant cell tracking for surgical removal: plantCell -> list of (material, startIndex, indexCount)
+    private readonly Dictionary<Vector3Int, List<(Material mat,int triStart,int triCount)>> _cellToRanges = new();
+    // Per material dummy vertex index (offscreen) used to collapse removed triangles safely
+    private readonly Dictionary<Material, int> _dummyIndex = new();
 
         private static readonly Vector2[] QuadUV =
         {
             new Vector2(0,0), new Vector2(1,0), new Vector2(1,1), new Vector2(0,1)
         };
 
-        public void Clear()
+        public void Clear(bool preserveTracking = false)
         {
             foreach (var child in _children.Values)
             {
                 if (child != null) Destroy(child);
             }
             _children.Clear();
-            _verts.Clear(); _uvs.Clear(); _tris.Clear(); _meshes.Clear();
+            _verts.Clear(); _uvs.Clear(); _tris.Clear(); _meshes.Clear(); _dummyIndex.Clear();
+            if (!preserveTracking) _cellToRanges.Clear();
         }
 
-    public void AddPlantCluster(Vector3 localPos, PlantDefinition def, Material mat, System.Random rng)
+    public void AddPlantCluster(Vector3 localPos, PlantDefinition def, Material mat, System.Random rng, Vector3Int? plantCell = null)
         {
             if (def == null || mat == null) return;
             if (!_verts.TryGetValue(mat, out var v)) { v = new List<Vector3>(); _verts[mat] = v; }
@@ -69,6 +74,7 @@ public class PlantChunkRenderer : MonoBehaviour
                 u.Add(QuadUV[0]); u.Add(QuadUV[1]); u.Add(QuadUV[2]); u.Add(QuadUV[3]);
                 // Triangles (double-sided)
                 // A
+                int triStart = t.Count; // capture start for cell mapping
                 t.Add(vStart + 0); t.Add(vStart + 2); t.Add(vStart + 1);
                 t.Add(vStart + 0); t.Add(vStart + 3); t.Add(vStart + 2);
                 t.Add(vStart + 1); t.Add(vStart + 2); t.Add(vStart + 0);
@@ -78,6 +84,13 @@ public class PlantChunkRenderer : MonoBehaviour
                 t.Add(vStart + 4); t.Add(vStart + 7); t.Add(vStart + 6);
                 t.Add(vStart + 5); t.Add(vStart + 6); t.Add(vStart + 4);
                 t.Add(vStart + 6); t.Add(vStart + 7); t.Add(vStart + 4);
+                int triAdded = 24; // 8 triangles * 3 indices
+                if (plantCell.HasValue)
+                {
+                    if (!_cellToRanges.TryGetValue(plantCell.Value, out var list))
+                        list = _cellToRanges[plantCell.Value] = new List<(Material,int,int)>();
+                    list.Add((mat, triStart, triAdded));
+                }
             }
         }
 
@@ -114,7 +127,7 @@ public class PlantChunkRenderer : MonoBehaviour
             _verts.Clear(); _uvs.Clear(); _tris.Clear();
         }
         // Overload that accepts primitive parameters instead of PlantDefinition (for reflection-friendly callers)
-        public void AddPlantCluster(Vector3 localPos, Vector2 heightRange, float width, float yOffset, int quadsPerInstance, Material mat, System.Random rng)
+    public void AddPlantCluster(Vector3 localPos, Vector2 heightRange, float width, float yOffset, int quadsPerInstance, Material mat, System.Random rng, Vector3Int? plantCell = null)
         {
             if (mat == null) return;
             if (!_verts.TryGetValue(mat, out var v)) { v = new List<Vector3>(); _verts[mat] = v; }
@@ -150,6 +163,7 @@ public class PlantChunkRenderer : MonoBehaviour
                 u.Add(QuadUV[0]); u.Add(QuadUV[1]); u.Add(QuadUV[2]); u.Add(QuadUV[3]);
                 // Triangles (double-sided)
                 // A
+                int triStart = t.Count;
                 t.Add(vStart + 0); t.Add(vStart + 2); t.Add(vStart + 1);
                 t.Add(vStart + 0); t.Add(vStart + 3); t.Add(vStart + 2);
                 t.Add(vStart + 1); t.Add(vStart + 2); t.Add(vStart + 0);
@@ -159,6 +173,41 @@ public class PlantChunkRenderer : MonoBehaviour
                 t.Add(vStart + 4); t.Add(vStart + 7); t.Add(vStart + 6);
                 t.Add(vStart + 5); t.Add(vStart + 6); t.Add(vStart + 4);
                 t.Add(vStart + 6); t.Add(vStart + 7); t.Add(vStart + 4);
+                int triAdded = 24;
+                if (plantCell.HasValue)
+                {
+                    if (!_cellToRanges.TryGetValue(plantCell.Value, out var list))
+                        list = _cellToRanges[plantCell.Value] = new List<(Material,int,int)>();
+                    list.Add((mat, triStart, triAdded));
+                }
             }
+        }
+
+        // Remove plant geometry for a given world plant cell (chunk local tracking via world cell key).
+        public void RemovePlantCellGeometry(Vector3Int plantCell)
+        {
+            if (!_cellToRanges.TryGetValue(plantCell, out var ranges) || ranges.Count == 0) return;
+            // Degenerate each triangle range by pointing all three indices of every triangle to a dedicated
+            // offscreen dummy vertex so other ranges keep valid offsets and future removals stay correct.
+            foreach (var (mat, triStart, triCount) in ranges)
+            {
+                if (!_meshes.TryGetValue(mat, out var mesh) || mesh == null) continue;
+                // Ensure dummy vertex exists
+                if (!_dummyIndex.TryGetValue(mat, out int dummy))
+                {
+                    var verts = new List<Vector3>();
+                    mesh.GetVertices(verts);
+                    verts.Add(new Vector3(0, -9999f, 0));
+                    dummy = verts.Count - 1;
+                    mesh.SetVertices(verts);
+                    _dummyIndex[mat] = dummy;
+                }
+                var tris = mesh.GetTriangles(0);
+                int end = Mathf.Min(triStart + triCount, tris.Length);
+                // triCount is multiple of 3 (24). Replace each index with dummy.
+                for (int i = triStart; i < end; i++) tris[i] = dummy;
+                mesh.SetTriangles(tris, 0, true);
+            }
+            _cellToRanges.Remove(plantCell);
         }
     }

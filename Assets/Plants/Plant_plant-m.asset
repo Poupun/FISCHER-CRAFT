@@ -10,9 +10,9 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d1322819d5f2c4b43b42642c46b116cd, type: 3}
-  m_Name: Plant_plant
+  m_Name: Plant_plant-m
   m_EditorClassIdentifier: 
-  texture: {fileID: 2800000, guid: 5abc60ec5f0dfc44f904652c7dfff197, type: 3}
+  texture: {fileID: 2800000, guid: 2037be63fb539f34d952130ca19a7967, type: 3}
   tint: {r: 1, g: 1, b: 1, a: 1}
   width: 0.9
   heightRange: {x: 0.6, y: 1.2}

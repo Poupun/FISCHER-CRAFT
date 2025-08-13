@@ -18,6 +18,25 @@ public class WorldGenerator : MonoBehaviour
     [Min(0)] public int flatDirtLayers = 3;
     [Min(0)] public int flatGrassLayers = 1;
 
+    [Header("Height Variation (Plains Biome)")]
+    [Tooltip("Enable simple noise-based height variation for the superflat world (acts as first plain biome prototype)")]
+    public bool enableHeightVariation = true;
+    [Tooltip("World seed for deterministic generation")]
+    public int worldSeed = 12345;
+    [Tooltip("Amplitude (in blocks) of height variation above/below the base grass level")]
+    [Min(0)] public int heightVariation = 4;
+    [Tooltip("Perlin/Fractal noise scale (higher = smoother, lower = more frequent variation)")]
+    public float heightNoiseScale = 48f;
+    [Header("Fractal Noise")] 
+    [Tooltip("Number of octaves for fractal noise (1 = basic Perlin)")]
+    [Range(1,6)] public int heightNoiseOctaves = 3;
+    [Tooltip("Persistence factor for amplitude across octaves")]
+    [Range(0f,1f)] public float heightNoisePersistence = 0.5f;
+    [Tooltip("Lacunarity factor for frequency growth across octaves")]
+    [Range(1.5f,4f)] public float heightNoiseLacunarity = 2.0f;
+    [Tooltip("Vertical bias added after noise mapping (-1..1) before scaling; can shift overall terrain up or down relative to base")]
+    [Range(-1f,1f)] public float heightNoiseBias = 0f;
+
     [Header("Chunk Streaming")] 
     [Tooltip("Enable player-centered chunk streaming for infinite superflat world")]
     public bool useChunkStreaming = true;
@@ -395,7 +414,7 @@ public class WorldGenerator : MonoBehaviour
     {
         if (!generateSuperflat)
         {
-            // Legacy stack based on Y only (mirrors previous non-superflat path)
+            // Legacy stack based on Y only (kept for reference)
             if (worldPos.y == 0) return BlockType.Stone;
             if (worldPos.y < 3) return BlockType.Stone;
             if (worldPos.y < 6) return BlockType.Dirt;
@@ -403,15 +422,83 @@ public class WorldGenerator : MonoBehaviour
             return BlockType.Air;
         }
 
+        // Superflat with optional height variation
         int stone = Mathf.Max(0, flatStoneLayers);
         int dirt = Mathf.Max(0, flatDirtLayers);
         int grass = Mathf.Max(0, flatGrassLayers);
-        int totalLayers = stone + dirt + grass;
         if (worldPos.y < 0 || worldPos.y >= worldHeight) return BlockType.Air;
+
+        // Base top (zero-based Y) for grass without variation
+        int baseTop = stone + dirt + grass - 1;
+        int columnTop = baseTop;
+        if (enableHeightVariation && heightVariation > 0)
+        {
+            columnTop = GetColumnTopY(worldPos.x, worldPos.z, stone, dirt, grass, baseTop);
+        }
+
         if (worldPos.y < stone) return BlockType.Stone;
-        if (worldPos.y < stone + dirt) return BlockType.Dirt;
-        if (worldPos.y < totalLayers) return BlockType.Grass;
+        // Ensure we don't index above column top; everything between stone and top-1 is dirt
+        if (worldPos.y < columnTop) return BlockType.Dirt;
+        if (worldPos.y == columnTop) return BlockType.Grass;
         return BlockType.Air;
+    }
+
+    // Returns top grass Y for a column (world XZ) using current noise settings.
+    // stone/dirt/grass parameters are passed for performance to avoid recomputing.
+    private int GetColumnTopY(int worldX, int worldZ, int stone, int dirt, int grass, int baseTop)
+    {
+        if (!enableHeightVariation || heightVariation <= 0)
+            return baseTop;
+        float n = EvaluateHeightNoise(worldX, worldZ); // [-1,1]
+        n += heightNoiseBias; // apply user bias
+        n = Mathf.Clamp(n, -1f, 1f);
+        int delta = Mathf.RoundToInt(n * heightVariation);
+        int columnTop = baseTop + delta;
+        // Prevent grass from dipping below stone layer (so we always have at least a dirt/grass cap).
+        int minTop = stone; // allow grass directly above stone if negative variation large
+        columnTop = Mathf.Max(minTop, columnTop);
+        columnTop = Mathf.Min(worldHeight - 1, columnTop);
+        return columnTop;
+    }
+
+    // Public helper (used in chunk streaming to compute useful Y per chunk)
+    public int GetColumnTopY(int worldX, int worldZ)
+    {
+        int stone = Mathf.Max(0, flatStoneLayers);
+        int dirt = Mathf.Max(0, flatDirtLayers);
+        int grass = Mathf.Max(0, flatGrassLayers);
+        int baseTop = stone + dirt + grass - 1;
+        return GetColumnTopY(worldX, worldZ, stone, dirt, grass, baseTop);
+    }
+
+    // Fractal noise evaluation mapped to [-1,1]
+    private float EvaluateHeightNoise(int x, int z)
+    {
+        // Fast path single octave
+        if (heightNoiseOctaves <= 1)
+        {
+            float nx = (x + worldSeed * 13) / Mathf.Max(0.0001f, heightNoiseScale);
+            float nz = (z + worldSeed * 29) / Mathf.Max(0.0001f, heightNoiseScale);
+            float p = Mathf.PerlinNoise(nx, nz); // [0,1]
+            return p * 2f - 1f;
+        }
+
+        float amplitude = 1f;
+        float frequency = 1f;
+        float sum = 0f;
+        float norm = 0f;
+        for (int o = 0; o < heightNoiseOctaves; o++)
+        {
+            float nx = (x + worldSeed * 13) / Mathf.Max(0.0001f, heightNoiseScale) * frequency;
+            float nz = (z + worldSeed * 29) / Mathf.Max(0.0001f, heightNoiseScale) * frequency;
+            float p = Mathf.PerlinNoise(nx, nz); // [0,1]
+            sum += (p * 2f - 1f) * amplitude;
+            norm += amplitude;
+            amplitude *= heightNoisePersistence;
+            frequency *= heightNoiseLacunarity;
+        }
+        if (norm <= 0f) return 0f;
+        return Mathf.Clamp(sum / norm, -1f, 1f);
     }
 
     // --- Chunk streaming helpers ---
@@ -494,22 +581,46 @@ public class WorldGenerator : MonoBehaviour
     // Create chunk and generate data with small yields to avoid spikes
         var chunk = new WorldGeneration.Chunks.Chunk(coord, chunkSizeX, worldHeight, chunkSizeZ, _chunksRoot);
 
-        // Generate data with coarse yields: iterate Y up to useful layers only
+        // Determine vertical budget for this chunk. With height variation we scan columns to find the max top.
         int stone = Mathf.Max(0, flatStoneLayers);
         int dirt = Mathf.Max(0, flatDirtLayers);
         int grass = Mathf.Max(0, flatGrassLayers);
-        int usefulY = Mathf.Min(worldHeight, stone + dirt + grass);
+        int baseTop = stone + dirt + grass - 1;
+        int usefulY;
+        if (enableHeightVariation && heightVariation > 0)
+        {
+            int maxTop = 0;
+            for (int lx = 0; lx < chunkSizeX; lx++)
+            {
+                int worldX = coord.x * chunkSizeX + lx;
+                for (int lz = 0; lz < chunkSizeZ; lz++)
+                {
+                    int worldZ = coord.y * chunkSizeZ + lz;
+                    int top = GetColumnTopY(worldX, worldZ, stone, dirt, grass, baseTop);
+                    if (top > maxTop) maxTop = top;
+                }
+            }
+            usefulY = Mathf.Min(worldHeight, maxTop + 1); // +1 because top is zero-based
+        }
+        else
+        {
+            usefulY = Mathf.Min(worldHeight, baseTop + 1);
+        }
         usefulY = Mathf.Max(1, usefulY);
 
         for (int lx = 0; lx < chunkSizeX; lx++)
         {
             for (int lz = 0; lz < chunkSizeZ; lz++)
             {
-                for (int ly = 0; ly < usefulY; ly++)
+                // Column-specific top to avoid iterating unnecessary upper air cells when variation enabled
+                int columnTop = enableHeightVariation && heightVariation > 0
+                    ? GetColumnTopY(coord.x * chunkSizeX + lx, coord.y * chunkSizeZ + lz, stone, dirt, grass, baseTop)
+                    : (stone + dirt + grass - 1);
+                int columnMaxY = Mathf.Min(worldHeight - 1, columnTop);
+                for (int ly = 0; ly <= columnMaxY; ly++)
                 {
                     var wp = new Vector3Int(coord.x * chunkSizeX + lx, ly, coord.y * chunkSizeZ + lz);
-                    var t = GenerateBlockTypeAt(wp);
-                    chunk.SetLocal(lx, ly, lz, t);
+                    chunk.SetLocal(lx, ly, lz, GenerateBlockTypeAt(wp));
                 }
             }
             if ((lx & 3) == 0) yield return null; // yield every few columns
@@ -1260,14 +1371,11 @@ public class WorldGenerator : MonoBehaviour
         if (build == null) return;
         build.Invoke(null, new object[] { this, chunk, addChunkCollider });
 
-        // After rebuilding block mesh, immediately rebuild batched plants so removals/additions are reflected without delay
+        // After rebuilding block mesh, rebuild batched plants using the actual chunk vertical size
+        // (previously used flat layer counts causing plants above that threshold to vanish after any rebuild).
         if (useChunkMeshing && HasAnyPlants())
         {
-            int stone = Mathf.Max(0, flatStoneLayers);
-            int dirt = Mathf.Max(0, flatDirtLayers);
-            int grass = Mathf.Max(0, flatGrassLayers);
-            int usefulY = Mathf.Min(worldHeight, stone + dirt + grass);
-            usefulY = Mathf.Max(1, usefulY);
+            int usefulY = Mathf.Min(worldHeight, chunk.sizeY); // full vertical scan within world bounds
             BuildChunkPlants(chunk, usefulY);
         }
     }
@@ -1355,7 +1463,9 @@ public class WorldGenerator : MonoBehaviour
         {
             for (int lz = 0; lz < chunk.sizeZ; lz++)
             {
-                for (int ly = 1; ly < usefulY; ly++)
+                // ly+1 is accessed below (tAbove), so stop at sizeY-1 to stay in range
+                int maxLy = Mathf.Min(usefulY, chunk.sizeY - 1);
+                for (int ly = 1; ly < maxLy; ly++)
                 {
                     var t = chunk.GetLocal(lx, ly, lz);
                     var tAbove = chunk.GetLocal(lx, ly + 1, lz);
@@ -1392,10 +1502,9 @@ public class WorldGenerator : MonoBehaviour
                     // Local position inside chunk parent space
                     var localPos = new Vector3(lx + 0.5f, ly + 1.001f, lz + 0.5f);
 
-                    for (int i = 0; i < count; i++)
-                    {
-                        pcr.AddPlantCluster(localPos, hr, w, yo, 2, mat, rng);
-                    }
+                    // Aggregate density into number of crossed-quad sets (clamped 1..4)
+                    int quads = Mathf.Clamp(count * 2, 1, 4); // base 2 quads scaled by density count
+                    pcr.AddPlantCluster(localPos, hr, w, yo, quads, mat, rng, plantCell);
                 }
             }
         }
@@ -1432,27 +1541,49 @@ public class WorldGenerator : MonoBehaviour
     public void RemoveBatchedPlantAt(Vector3Int plantCell)
     {
         if (!useChunkStreaming || !useChunkMeshing) return;
-        var grassCell = plantCell + Vector3Int.down;
         var cc = WorldToChunkCoord(plantCell);
         if (!_removedBatchedPlants.TryGetValue(cc, out var removedSet))
         {
             removedSet = new HashSet<Vector3Int>();
             _removedBatchedPlants[cc] = removedSet;
         }
-        if (!removedSet.Contains(plantCell)) removedSet.Add(plantCell);
+        // Mark removed (idempotent)
+        removedSet.Add(plantCell);
 
-        // Rebuild this chunk's plant batch
+        // Perform a surgical rebuild affecting only this one cell's geometry instead of rebuilding
+        // the entire chunk plant mesh. We rebuild per material: remove triangles for this cell then
+        // (optionally) regenerate if it should still exist (it should not since we removed it).
         if (_chunks.TryGetValue(cc, out var chunk))
         {
-            int stone = Mathf.Max(0, flatStoneLayers);
-            int dirt = Mathf.Max(0, flatDirtLayers);
-            int grass = Mathf.Max(0, flatGrassLayers);
-            int usefulY = Mathf.Min(worldHeight, stone + dirt + grass);
-            usefulY = Mathf.Max(1, usefulY);
-            BuildChunkPlants(chunk, usefulY);
+            RebuildSinglePlantCell(chunk, plantCell);
         }
 
     // No respawn scheduling: plants reappear only if chunk is regenerated or grass regrows and density logic includes them
+    }
+
+    // Rebuild only one plant cell inside the chunk's PlantChunkRenderer to avoid full chunk flicker.
+    private void RebuildSinglePlantCell(WorldGeneration.Chunks.Chunk chunk, Vector3Int plantCell)
+    {
+        if (chunk == null || chunk.parent == null) return;
+        var renderer = chunk.parent.GetComponent<PlantChunkRenderer>();
+        if (renderer == null)
+        {
+            // Nothing to do if no plants were built yet for this chunk.
+            return;
+        }
+    // Surgical removal: PlantChunkRenderer tracks triangle ranges per plant cell.
+    // We remove only that cell's triangles; fallback rebuild only if tracking unavailable.
+    // Try surgical removal first (if renderer exposes tracking) else fallback to rebuild
+        var pcrRenderer = chunk.parent.GetComponent<PlantChunkRenderer>();
+        if (pcrRenderer != null)
+        {
+            pcrRenderer.RemovePlantCellGeometry(plantCell);
+        }
+        else
+        {
+            int fullY = Mathf.Clamp(chunk.sizeY, 1, worldHeight);
+            BuildChunkPlants(chunk, fullY);
+        }
     }
 
     private void SchedulePlantRespawnBatched(Vector3Int grassCell, int delayTicks)
