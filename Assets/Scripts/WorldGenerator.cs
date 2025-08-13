@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
+// PlantDefinition and PlantDatabase are in global namespace after refactor
 
 public class WorldGenerator : MonoBehaviour
 {
@@ -45,11 +46,6 @@ public class WorldGenerator : MonoBehaviour
     [Header("Block Prefab")]
     public GameObject blockPrefab;
     
-    [Header("Lighting")]
-    [Tooltip("Apply a flat ambient light so underside faces (like grass bottoms) aren’t pitch black.")]
-    public bool applyFlatAmbientLighting = true;
-    [ColorUsage(false, true)] public Color ambientColor = new Color(0.35f, 0.35f, 0.35f);
-    
     [Header("Player Spawn Gating")]
     [Tooltip("If enabled, the player GameObject stays inactive until the first center chunk finishes building its mesh.")]
     public bool delayPlayerSpawnUntilChunks = true;
@@ -64,16 +60,11 @@ public class WorldGenerator : MonoBehaviour
     public Texture2D sandTexture;
     public Texture2D coalTexture;
 
-    [Header("Plant Textures (1..8)")]
-    public Texture2D[] plantTextures = new Texture2D[8];
-
-    [Header("Plant Spawn Settings")]
-    [Range(0f, 3f)] public float plantDensity = 0.7f; // expected plants per grass tile
-    public AnimationCurve plantRarityCurve = AnimationCurve.Linear(0, 1, 1, 0); // we will override by weights
-    [Tooltip("Maximum number of crossed-quads per plant cluster.")]
-    [Range(1, 6)] public int plantClusterMaxQuads = 3;
-    [Tooltip("Combine each cluster into one MeshRenderer to reduce GameObjects.")]
-    public bool plantsCombineIntoSingleRenderer = true;
+    [Header("Plants (New)")]
+    [Tooltip("Scriptable Object list of plants with textures, sizes, and weights.")]
+    public ScriptableObject plantDatabase;
+    [Tooltip("Expected plant instances per exposed grass tile (can be fractional).")]
+    [Range(0f, 3f)] public float plantDensity = 0.7f;
 
     [Header("Anti-Tiling Settings")]
     [Range(0.8f, 1.2f)]
@@ -84,10 +75,10 @@ public class WorldGenerator : MonoBehaviour
     
     private BlockType[,,] worldData;
     private Dictionary<Vector3Int, GameObject> blockObjects = new Dictionary<Vector3Int, GameObject>();
-    private Dictionary<Vector3Int, GameObject> plantObjects = new Dictionary<Vector3Int, GameObject>();
+    private Dictionary<Vector3Int, GameObject> plantObjects = new Dictionary<Vector3Int, GameObject>(); // legacy per-tile plants (non-meshing)
     private Material[] blockMaterials;
     // Cached special-case materials
-    private Material _grassSideMaterial; // for grass side faces only
+    private Material _grassSideMaterial;
     private Material _grassSideOverlayMaterial; // transparent cutout overlay used atop dirt on grass sides
     private TextureVariationManager textureManager;
     // Cache for plant materials by texture so we don't create per-instance materials
@@ -110,6 +101,8 @@ public class WorldGenerator : MonoBehaviour
     private readonly HashSet<Vector3Int> _scheduledGrassCells = new HashSet<Vector3Int>(); // dirt cell keys
     // Chunk persistence: per-chunk map of edited cells (world cell -> type)
     private readonly Dictionary<Vector2Int, Dictionary<Vector3Int, BlockType>> _chunkEdits = new Dictionary<Vector2Int, Dictionary<Vector3Int, BlockType>>();
+    // Meshing mode: per-chunk set of plant cells removed by the player (world-space plant cell = above grass)
+    private readonly Dictionary<Vector2Int, HashSet<Vector3Int>> _removedBatchedPlants = new Dictionary<Vector2Int, HashSet<Vector3Int>>();
 
     // Save DTOs (local to avoid cross-file dependency)
     [System.Serializable]
@@ -125,11 +118,6 @@ public class WorldGenerator : MonoBehaviour
         
         LoadTextures();
         CreateBlockMaterials();
-        if (applyFlatAmbientLighting)
-        {
-            RenderSettings.ambientMode = AmbientMode.Flat;
-            RenderSettings.ambientLight = ambientColor;
-        }
         if (useChunkStreaming)
         {
             EnsureChunksRoot();
@@ -178,41 +166,43 @@ public class WorldGenerator : MonoBehaviour
     void LoadTextures()
     {
         // Load textures from Resources folder if not assigned
-        if (grassTexture == null) grassTexture = Resources.Load<Texture2D>("Textures/grass");
-    if (grassSideTexture == null) grassSideTexture = Resources.Load<Texture2D>("Textures/side_normal");
+        if (grassTexture == null) grassTexture = Resources.Load<Texture2D>("Textures/top_grass");
+    if (grassSideTexture == null) grassSideTexture = Resources.Load<Texture2D>("Textures/side_grass");
     if (dirtTexture == null) dirtTexture = Resources.Load<Texture2D>("Textures/dirt");
     if (stoneTexture == null) stoneTexture = Resources.Load<Texture2D>("Textures/stone");
     if (sandTexture == null) sandTexture = Resources.Load<Texture2D>("Textures/sand");
     if (coalTexture == null) coalTexture = Resources.Load<Texture2D>("Textures/coal");
 
-        // Plants under Resources/Textures/plants/plant1..plant8 (optional)
-        for (int i = 0; i < plantTextures.Length; i++)
+        // Configure plant textures from PlantDatabase (set via ScriptableObjects)
+        if (plantDatabase != null)
         {
-            if (plantTextures[i] == null)
+            var dbType = plantDatabase.GetType();
+            var plantsField = dbType.GetField("plants");
+            if (plantsField != null)
             {
-                plantTextures[i] = Resources.Load<Texture2D>($"Textures/plants/plant{i+1}");
+                var arr = plantsField.GetValue(plantDatabase) as System.Array;
+                if (arr != null)
+                {
+                    foreach (var def in arr)
+                    {
+                        if (def == null) continue;
+                        var tex = def.GetType().GetField("texture")?.GetValue(def) as Texture2D;
+                        if (tex != null) ConfigureTexture(tex);
+                    }
+                }
             }
         }
 
 #if UNITY_EDITOR
     // Editor-only fallback to load directly from Assets/Textures if not found in Resources
-    if (grassTexture == null) grassTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/grass.png");
-    if (grassSideTexture == null) grassSideTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/side_normal.png");
+    if (grassTexture == null) grassTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/top_grass.png");
+    if (grassSideTexture == null) grassSideTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/side_grass.png");
     if (dirtTexture == null) dirtTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/dirt.png");
     if (stoneTexture == null) stoneTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/stone.png");
     if (sandTexture == null) sandTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/sand.png");
     if (coalTexture == null) coalTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/coal.png");
 
-        // Plants located at Assets/Textures/plants/1..8 or plant1..plant8
-        for (int i = 0; i < plantTextures.Length; i++)
-        {
-            if (plantTextures[i] == null)
-            {
-                var p = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>($"Assets/Textures/plants/{i+1}.png");
-                if (p == null) p = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>($"Assets/Textures/plants/plant{i+1}.png");
-                plantTextures[i] = p;
-            }
-        }
+    // Plants are assigned via PlantDatabase assets in the editor.
 #endif
         
         // Configure textures for better pixel art rendering
@@ -222,7 +212,7 @@ public class WorldGenerator : MonoBehaviour
         ConfigureTexture(stoneTexture);
         ConfigureTexture(sandTexture);
         ConfigureTexture(coalTexture);
-    foreach (var pt in plantTextures) ConfigureTexture(pt);
+    // Plant textures are configured via PlantDatabase above
         
         // Assign textures to block data
         BlockDatabase.blockTypes[(int)BlockType.Grass].blockTexture = grassTexture;
@@ -338,7 +328,7 @@ public class WorldGenerator : MonoBehaviour
     // Exposed for mesh builder overlay composition
     public Material GetGrassSideOverlayMaterial()
     {
-        return _grassSideOverlayMaterial != null ? _grassSideOverlayMaterial : _grassSideMaterial;
+        return _grassSideOverlayMaterial;
     }
     
     void GenerateWorld()
@@ -562,24 +552,8 @@ public class WorldGenerator : MonoBehaviour
                 }
             }
 
-            // Spawn plants on exposed grass even in meshing mode (use chunk-local data)
-            for (int lx = 0; lx < chunkSizeX; lx++)
-            {
-                for (int lz = 0; lz < chunkSizeZ; lz++)
-                {
-                    for (int ly = 1; ly < usefulY; ly++)
-                    {
-                        var t = chunk.GetLocal(lx, ly, lz);
-                        var tAbove = chunk.GetLocal(lx, ly + 1, lz);
-                        if (t == BlockType.Grass && tAbove == BlockType.Air)
-                        {
-                            var wp = new Vector3Int(coord.x * chunkSizeX + lx, ly, coord.y * chunkSizeZ + lz);
-                            TrySpawnPlantClusterAt(wp, chunk.parent);
-                        }
-                    }
-                }
-                if ((lx & 3) == 0) yield return null;
-            }
+            // Spawn plants in batched renderer for very lightweight loads
+            BuildChunkPlants(chunk, usefulY);
         }
         else
         {
@@ -675,7 +649,7 @@ public class WorldGenerator : MonoBehaviour
                         // Only if the top face is exposed
                         if (ShouldRenderBlock(x, y, z))
                         {
-                            if (HasAnyPlantTextures())
+                            if (HasAnyPlants())
                             {
                                 // Interpret plantDensity as expected blades per tile. Values >1 spawn clusters.
                                 float desired = Mathf.Max(0f, plantDensity);
@@ -699,8 +673,16 @@ public class WorldGenerator : MonoBehaviour
                                         }
                                     }
                                     parent.transform.position = placePos;
-                                    // Use helper so initial plants have colliders and correct config
-                                    SpawnPlantChildrenIntoParent(parent, new Vector3Int(x, y, z), count, rng);
+                                    // Use helper with definition from PlantDatabase via reflection
+                                    var def = PlantDB_PickByWeight(rng);
+                                    var tex = PlantDef_GetTexture(def);
+                                    if (tex != null)
+                                    {
+                                        var hr = PlantDef_GetHeightRange(def);
+                                        var w = PlantDef_GetWidth(def);
+                                        var yo = PlantDef_GetYOffset(def);
+                                        SpawnPlantChildrenIntoParent(parent, new Vector3Int(x, y, z), count, rng, tex, hr, w, yo);
+                                    }
                                     plantObjects[new Vector3Int(x, y + 1, z)] = parent;
                                 }
                             }
@@ -711,9 +693,9 @@ public class WorldGenerator : MonoBehaviour
         }
     }
 
-    public bool HasAnyPlantTextures()
+    public bool HasAnyPlants()
     {
-        foreach (var t in plantTextures) if (t != null) return true; return false;
+        return PlantDB_HasAny();
     }
     
     public bool ShouldRenderBlock(int x, int y, int z)
@@ -755,61 +737,83 @@ public class WorldGenerator : MonoBehaviour
     public void CreateBlock(Vector3Int position, BlockType blockType)
     {
         if (blockPrefab == null) return;
-        
-        GameObject block = Instantiate(blockPrefab, position, Quaternion.identity, transform);
-        block.name = $"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})";
-        
-        // Apply material with position-based variation
-        Renderer renderer = block.GetComponent<Renderer>();
-        if (renderer != null)
+
+        if (blockType == BlockType.Grass)
         {
-            if (blockType == BlockType.Grass)
+            // Grass block is special: create a parent and then individual faces
+            GameObject grassBlockParent = new GameObject($"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})");
+            grassBlockParent.transform.position = position;
+            grassBlockParent.transform.parent = transform;
+
+            // Define faces: 0=up, 1=down, 2=left, 3=right, 4=forward, 5=back
+            Vector3[] faceNormals = { Vector3.up, Vector3.down, Vector3.left, Vector3.right, Vector3.forward, Vector3.back };
+            Material[] faceMaterials = {
+                GetBlockMaterial(BlockType.Grass), // Top
+                GetBlockMaterial(BlockType.Dirt),  // Bottom
+                GetBlockMaterial(BlockType.Dirt), // Side
+                GetBlockMaterial(BlockType.Dirt), // Side
+                GetBlockMaterial(BlockType.Dirt), // Side
+                GetBlockMaterial(BlockType.Dirt)  // Side
+            };
+            Texture2D[] faceTextures = {
+                grassTexture,
+                dirtTexture,
+                grassSideTexture,
+                grassSideTexture,
+                grassSideTexture,
+                grassSideTexture
+            };
+
+            for (int i = 0; i < 6; i++)
             {
-                // Try to add/apply GrassBlockRenderer via reflection to avoid compile order issues
-                var type = ResolveTypeByName("GrassBlockRenderer");
-                if (type != null)
+                Vector3Int neighborPos = position + Vector3Int.RoundToInt(faceNormals[i]);
+                if (IsOutOfBounds(neighborPos) || GetBlockType(neighborPos) == BlockType.Air)
                 {
-                    var comp = block.GetComponent(type);
-                    if (comp == null) comp = block.AddComponent(type);
-                    var apply = type.GetMethod("Apply", new System.Type[] { typeof(WorldGenerator) });
-                    if (apply != null)
+                    GameObject face = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    face.transform.SetParent(grassBlockParent.transform, false);
+                    face.transform.position = position + faceNormals[i] * 0.5f;
+                    face.transform.rotation = Quaternion.LookRotation(-faceNormals[i]);
+                    
+                    Renderer faceRenderer = face.GetComponent<Renderer>();
+                    if (faceRenderer != null)
                     {
-                        apply.Invoke(comp, new object[] { this });
+                        Material mat = CreateVariationMaterial(faceMaterials[i], position);
+                        mat.mainTexture = faceTextures[i];
+                        mat.SetTexture("_BaseMap", faceTextures[i]);
+                        faceRenderer.material = mat;
                     }
-                }
-                else
-                {
-                    // Fallback to single material
-                    Material baseMaterial = blockMaterials[(int)blockType];
-                    if (baseMaterial != null)
-                    {
-                        Material instanceMaterial = CreateVariationMaterial(baseMaterial, position);
-                        renderer.material = instanceMaterial;
-                    }
+                    Destroy(face.GetComponent<Collider>());
                 }
             }
-            else
+            blockObjects[position] = grassBlockParent;
+        }
+        else
+        {
+            GameObject block = Instantiate(blockPrefab, position, Quaternion.identity, transform);
+            block.name = $"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})";
+            
+            Renderer renderer = block.GetComponent<Renderer>();
+            if (renderer != null)
             {
                 Material baseMaterial = blockMaterials[(int)blockType];
                 if (baseMaterial != null)
                 {
-                    // Create a unique material instance with slight variations
                     Material instanceMaterial = CreateVariationMaterial(baseMaterial, position);
                     renderer.material = instanceMaterial;
                 }
             }
+            blockObjects[position] = block;
         }
-        
-        // Add BlockInfo component
-        BlockInfo blockInfo = block.GetComponent<BlockInfo>();
+
+        // Add BlockInfo component to the root block object
+        GameObject rootObject = blockObjects[position];
+        BlockInfo blockInfo = rootObject.GetComponent<BlockInfo>();
         if (blockInfo == null)
         {
-            blockInfo = block.AddComponent<BlockInfo>();
+            blockInfo = rootObject.AddComponent<BlockInfo>();
         }
         blockInfo.blockType = blockType;
         blockInfo.position = position;
-        
-        blockObjects[position] = block;
     }
 
     // Overload to allow parenting under a chunk parent
@@ -818,37 +822,61 @@ public class WorldGenerator : MonoBehaviour
         if (blockPrefab == null) return;
 
         Transform p = parentOverride != null ? parentOverride : this.transform;
-        GameObject block = Instantiate(blockPrefab, position, Quaternion.identity, p);
-        block.name = $"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})";
-
-        // Apply material with position-based variation
-        Renderer renderer = block.GetComponent<Renderer>();
-        if (renderer != null)
+        
+        if (blockType == BlockType.Grass)
         {
-            if (blockType == BlockType.Grass)
+            GameObject grassBlockParent = new GameObject($"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})");
+            grassBlockParent.transform.position = position;
+            grassBlockParent.transform.SetParent(p, true);
+
+            Vector3[] faceNormals = { Vector3.up, Vector3.down, Vector3.left, Vector3.right, Vector3.forward, Vector3.back };
+            Material[] faceMaterials = {
+                GetBlockMaterial(BlockType.Grass), // Top
+                GetBlockMaterial(BlockType.Dirt),  // Bottom
+                GetBlockMaterial(BlockType.Dirt), // Side
+                GetBlockMaterial(BlockType.Dirt), // Side
+                GetBlockMaterial(BlockType.Dirt), // Side
+                GetBlockMaterial(BlockType.Dirt)  // Side
+            };
+            Texture2D[] faceTextures = {
+                grassTexture,
+                dirtTexture,
+                grassSideTexture,
+                grassSideTexture,
+                grassSideTexture,
+                grassSideTexture
+            };
+
+            for (int i = 0; i < 6; i++)
             {
-                var type = ResolveTypeByName("GrassBlockRenderer");
-                if (type != null)
+                 Vector3Int neighborPos = position + Vector3Int.RoundToInt(faceNormals[i]);
+                if (IsOutOfBounds(neighborPos) || GetBlockType(neighborPos) == BlockType.Air)
                 {
-                    var comp = block.GetComponent(type);
-                    if (comp == null) comp = block.AddComponent(type);
-                    var apply = type.GetMethod("Apply", new System.Type[] { typeof(WorldGenerator) });
-                    if (apply != null)
+                    GameObject face = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    face.transform.SetParent(grassBlockParent.transform, false);
+                    face.transform.position = position + faceNormals[i] * 0.5f;
+                    face.transform.rotation = Quaternion.LookRotation(-faceNormals[i]);
+                    
+                    Renderer faceRenderer = face.GetComponent<Renderer>();
+                    if (faceRenderer != null)
                     {
-                        apply.Invoke(comp, new object[] { this });
+                        Material mat = CreateVariationMaterial(faceMaterials[i], position);
+                        mat.mainTexture = faceTextures[i];
+                        mat.SetTexture("_BaseMap", faceTextures[i]);
+                        faceRenderer.material = mat;
                     }
-                }
-                else
-                {
-                    Material baseMaterial = blockMaterials[(int)blockType];
-                    if (baseMaterial != null)
-                    {
-                        Material instanceMaterial = CreateVariationMaterial(baseMaterial, position);
-                        renderer.material = instanceMaterial;
-                    }
+                    Destroy(face.GetComponent<Collider>());
                 }
             }
-            else
+            blockObjects[position] = grassBlockParent;
+        }
+        else
+        {
+            GameObject block = Instantiate(blockPrefab, position, Quaternion.identity, p);
+            block.name = $"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})";
+
+            Renderer renderer = block.GetComponent<Renderer>();
+            if (renderer != null)
             {
                 Material baseMaterial = blockMaterials[(int)blockType];
                 if (baseMaterial != null)
@@ -857,18 +885,18 @@ public class WorldGenerator : MonoBehaviour
                     renderer.material = instanceMaterial;
                 }
             }
+            blockObjects[position] = block;
         }
 
         // Add BlockInfo component
-        BlockInfo blockInfo = block.GetComponent<BlockInfo>();
+        GameObject rootObject = blockObjects[position];
+        BlockInfo blockInfo = rootObject.GetComponent<BlockInfo>();
         if (blockInfo == null)
         {
-            blockInfo = block.AddComponent<BlockInfo>();
+            blockInfo = rootObject.AddComponent<BlockInfo>();
         }
         blockInfo.blockType = blockType;
         blockInfo.position = position;
-
-        blockObjects[position] = block;
     }
     
     Material CreateVariationMaterial(Material baseMaterial, Vector3Int position)
@@ -889,15 +917,15 @@ public class WorldGenerator : MonoBehaviour
         float offsetY = (float)posRandom.NextDouble() * textureOffsetVariation;
         instanceMaterial.mainTextureOffset = new Vector2(offsetX, offsetY);
         
-        // Slight color variation to add more natural look
-        float colorVariation = 0.95f + (float)posRandom.NextDouble() * 0.1f; // 95% to 105%
-        Color baseColor = baseMaterial.color;
-        instanceMaterial.color = new Color(
-            baseColor.r * colorVariation,
-            baseColor.g * colorVariation,
-            baseColor.b * colorVariation,
-            baseColor.a
-        );
+        // The color is already set on the base material, so no need to change it
+        // float colorVariation = 0.95f + (float)posRandom.NextDouble() * 0.1f; // 95% to 105%
+        // Color baseColor = baseMaterial.color;
+        // instanceMaterial.color = new Color(
+        //     baseColor.r * colorVariation,
+        //     baseColor.g * colorVariation,
+        //     baseColor.b * colorVariation,
+        //     baseColor.a
+        // );
         
         return instanceMaterial;
     }
@@ -953,10 +981,19 @@ public class WorldGenerator : MonoBehaviour
         // If a block is placed where a plant currently exists, remove the plant at that cell
         if (blockType != BlockType.Air)
         {
+            // Non-meshing: legacy GameObject plants
             if (plantObjects.TryGetValue(position, out var plantAtPos))
             {
                 if (plantAtPos != null) Destroy(plantAtPos);
                 plantObjects.Remove(position);
+            }
+            // Meshing: remove batched plant at this cell if present
+            if (useChunkStreaming && useChunkMeshing)
+            {
+                if (HasBatchedPlantAt(position))
+                {
+                    RemoveBatchedPlantAt(position);
+                }
             }
         }
 
@@ -968,6 +1005,13 @@ public class WorldGenerator : MonoBehaviour
             {
                 if (plantAbove != null) Destroy(plantAbove);
                 plantObjects.Remove(above);
+            }
+            if (useChunkStreaming && useChunkMeshing)
+            {
+                if (HasBatchedPlantAt(above))
+                {
+                    RemoveBatchedPlantAt(above);
+                }
             }
         }
 
@@ -1002,6 +1046,13 @@ public class WorldGenerator : MonoBehaviour
                 {
                     if (plantAtAboveBelow != null) Destroy(plantAtAboveBelow);
                     plantObjects.Remove(aboveBelow);
+                }
+                if (useChunkStreaming && useChunkMeshing)
+                {
+                    if (HasBatchedPlantAt(aboveBelow))
+                    {
+                        RemoveBatchedPlantAt(aboveBelow);
+                    }
                 }
                 _scheduledPlantCells.Remove(below);
                 // Refresh visuals for the converted block
@@ -1208,6 +1259,17 @@ public class WorldGenerator : MonoBehaviour
         var build = builderType.GetMethod("BuildMesh", new System.Type[] { typeof(WorldGenerator), chunkType, typeof(bool) });
         if (build == null) return;
         build.Invoke(null, new object[] { this, chunk, addChunkCollider });
+
+        // After rebuilding block mesh, immediately rebuild batched plants so removals/additions are reflected without delay
+        if (useChunkMeshing && HasAnyPlants())
+        {
+            int stone = Mathf.Max(0, flatStoneLayers);
+            int dirt = Mathf.Max(0, flatDirtLayers);
+            int grass = Mathf.Max(0, flatGrassLayers);
+            int usefulY = Mathf.Min(worldHeight, stone + dirt + grass);
+            usefulY = Mathf.Max(1, usefulY);
+            BuildChunkPlants(chunk, usefulY);
+        }
     }
 
     // --- Startup player gate ---
@@ -1273,6 +1335,132 @@ public class WorldGenerator : MonoBehaviour
             return totalLayers - 1;
         }
         return -1;
+    }
+
+    // Build batched plants for a meshed chunk to keep loads lightweight
+    private void BuildChunkPlants(WorldGeneration.Chunks.Chunk chunk, int usefulY)
+    {
+        if (!HasAnyPlants() || chunk == null || chunk.parent == null) return;
+
+        // Ensure renderer component exists on chunk parent
+        var pcr = chunk.parent.GetComponent<PlantChunkRenderer>();
+        if (pcr == null) pcr = chunk.parent.gameObject.AddComponent<PlantChunkRenderer>();
+        pcr.chunkCoord = chunk.coord;
+        pcr.chunkSizeX = chunk.sizeX;
+        pcr.chunkSizeZ = chunk.sizeZ;
+        pcr.worldHeight = worldHeight;
+        pcr.Clear();
+
+        for (int lx = 0; lx < chunk.sizeX; lx++)
+        {
+            for (int lz = 0; lz < chunk.sizeZ; lz++)
+            {
+                for (int ly = 1; ly < usefulY; ly++)
+                {
+                    var t = chunk.GetLocal(lx, ly, lz);
+                    var tAbove = chunk.GetLocal(lx, ly + 1, lz);
+                    if (t != BlockType.Grass || tAbove != BlockType.Air) continue;
+                    // Determine deterministic world-space grass cell and plant cell
+                    var worldGrass = chunk.LocalToWorld(new Vector3Int(lx, ly, lz));
+                    var plantCell = worldGrass + Vector3Int.up;
+
+                    // Skip if this plant cell has been removed by the player
+                    var cc = chunk.coord;
+                    if (_removedBatchedPlants.TryGetValue(cc, out var removedSet) && removedSet.Contains(plantCell))
+                        continue;
+
+                    // Deterministic count per cell
+                    int count = CountBatchedPlantsAtCell(worldGrass);
+                    if (count <= 0) continue;
+
+                    // Per-cell deterministic RNG for visuals/definition pick
+                    int seed = worldGrass.x * 73856093 ^ worldGrass.y * 19349663 ^ worldGrass.z * 83492791;
+                    var rng = new System.Random(seed);
+
+                    // Pick a definition and its texture and params via reflection helpers
+                    var def = PlantDB_PickByWeight(rng);
+                    var tex = PlantDef_GetTexture(def);
+                    if (tex == null) continue;
+                    var hr = PlantDef_GetHeightRange(def);
+                    var w = PlantDef_GetWidth(def);
+                    var yo = PlantDef_GetYOffset(def);
+
+                    // Get shared plant material for this texture
+                    var mat = GetPlantSharedMaterial(tex);
+                    if (mat == null) continue;
+
+                    // Local position inside chunk parent space
+                    var localPos = new Vector3(lx + 0.5f, ly + 1.001f, lz + 0.5f);
+
+                    for (int i = 0; i < count; i++)
+                    {
+                        pcr.AddPlantCluster(localPos, hr, w, yo, 2, mat, rng);
+                    }
+                }
+            }
+        }
+
+        pcr.Flush(this);
+    }
+
+    // Return the expected plant instances at a grass cell using deterministic RNG per cell
+    private int CountBatchedPlantsAtCell(Vector3Int grassCell)
+    {
+        if (GetBlockType(grassCell) != BlockType.Grass) return 0;
+        if (GetBlockType(grassCell + Vector3Int.up) != BlockType.Air) return 0;
+        float desired = Mathf.Max(0f, plantDensity);
+        int count = Mathf.FloorToInt(desired);
+        double remainder = desired - count;
+        int seed = grassCell.x * 73856093 ^ grassCell.y * 19349663 ^ grassCell.z * 83492791;
+        var rng = new System.Random(seed);
+        if (rng.NextDouble() < remainder) count++;
+        return count;
+    }
+
+    // Query if a batched plant exists at the given plant cell (world space cell above a grass block)
+    public bool HasBatchedPlantAt(Vector3Int plantCell)
+    {
+        if (!useChunkStreaming || !useChunkMeshing) return false;
+        var grassCell = plantCell + Vector3Int.down;
+        var cc = WorldToChunkCoord(plantCell);
+        if (_removedBatchedPlants.TryGetValue(cc, out var removedSet) && removedSet.Contains(plantCell))
+            return false;
+        return CountBatchedPlantsAtCell(grassCell) > 0;
+    }
+
+    // Remove a batched plant at the given plant cell (no delayed respawn for instant feedback)
+    public void RemoveBatchedPlantAt(Vector3Int plantCell)
+    {
+        if (!useChunkStreaming || !useChunkMeshing) return;
+        var grassCell = plantCell + Vector3Int.down;
+        var cc = WorldToChunkCoord(plantCell);
+        if (!_removedBatchedPlants.TryGetValue(cc, out var removedSet))
+        {
+            removedSet = new HashSet<Vector3Int>();
+            _removedBatchedPlants[cc] = removedSet;
+        }
+        if (!removedSet.Contains(plantCell)) removedSet.Add(plantCell);
+
+        // Rebuild this chunk's plant batch
+        if (_chunks.TryGetValue(cc, out var chunk))
+        {
+            int stone = Mathf.Max(0, flatStoneLayers);
+            int dirt = Mathf.Max(0, flatDirtLayers);
+            int grass = Mathf.Max(0, flatGrassLayers);
+            int usefulY = Mathf.Min(worldHeight, stone + dirt + grass);
+            usefulY = Mathf.Max(1, usefulY);
+            BuildChunkPlants(chunk, usefulY);
+        }
+
+    // No respawn scheduling: plants reappear only if chunk is regenerated or grass regrows and density logic includes them
+    }
+
+    private void SchedulePlantRespawnBatched(Vector3Int grassCell, int delayTicks)
+    {
+        if (IsOutOfBounds(grassCell)) return;
+        if (_scheduledPlantCells.Contains(grassCell)) return;
+        _scheduledPlantCells.Add(grassCell);
+        _tickQueue.Add(new TickAction { dueTick = _currentTick + Mathf.Max(1, delayTicks), type = TA_PlantRespawn, cell = grassCell });
     }
 
     // Public helper for PlantBillboard and internal cleanup
@@ -1395,7 +1583,11 @@ public class WorldGenerator : MonoBehaviour
             if (ta.type == TA_PlantRespawn)
             {
                 _scheduledPlantCells.Remove(ta.cell);
-                TrySpawnPlantClusterAt(ta.cell);
+                // Batched plants no longer auto-respawn; only legacy per-plant GameObjects do.
+                if (!(useChunkStreaming && useChunkMeshing))
+                {
+                    TrySpawnPlantClusterAt(ta.cell);
+                }
             }
             else if (ta.type == TA_GrassGrow)
             {
@@ -1466,8 +1658,8 @@ public class WorldGenerator : MonoBehaviour
                 return;
             }
         }
-        if (!ShouldRenderBlock(grassCell.x, grassCell.y, grassCell.z)) return;
-        if (!HasAnyPlantTextures()) return;
+    if (!ShouldRenderBlock(grassCell.x, grassCell.y, grassCell.z)) return;
+    if (!HasAnyPlants()) return;
 
     System.Random rng = new System.Random(grassCell.GetHashCode() ^ (_currentTick * 997));
     float desired = Mathf.Max(0f, plantDensity); // use configured density directly
@@ -1495,7 +1687,15 @@ public class WorldGenerator : MonoBehaviour
             placePos = new Vector3(placePos.x, hit.point.y + 0.001f, placePos.z);
         }
         parent.transform.position = placePos;
-        SpawnPlantChildrenIntoParent(parent, grassCell, count, rng);
+        var def = PlantDB_PickByWeight(rng);
+        var tex = PlantDef_GetTexture(def);
+        if (tex != null)
+        {
+            var hr = PlantDef_GetHeightRange(def);
+            var w = PlantDef_GetWidth(def);
+            var yo = PlantDef_GetYOffset(def);
+            SpawnPlantChildrenIntoParent(parent, grassCell, count, rng, tex, hr, w, yo);
+        }
         plantObjects[above] = parent;
     }
 
@@ -1533,25 +1733,12 @@ public class WorldGenerator : MonoBehaviour
         }
     }
 
-    private void SpawnPlantChildrenIntoParent(GameObject parent, Vector3Int grassCell, int count, System.Random rng)
+    private void SpawnPlantChildrenIntoParent(GameObject parent, Vector3Int grassCell, int count, System.Random rng, Texture2D texture, Vector2 heightRange, float width, float yOffset)
     {
         // Cap quads per cluster for performance
-        count = Mathf.Clamp(count, 1, Mathf.Max(1, plantClusterMaxQuads));
-
-        // Pick one texture for the whole cluster (weighted), to use a single shared material
-        int[] weights = new int[] { 40, 25, 15, 9, 6, 3, 1, 1 };
-        int total = 0; foreach (var w in weights) total += w;
-        int pick = rng.Next(total);
-        int idx = 0; int acc = 0;
-        for (; idx < weights.Length; idx++) { acc += weights[idx]; if (pick < acc) break; }
-        idx = Mathf.Clamp(idx, 0, plantTextures.Length - 1);
-        var texture = plantTextures[idx];
-        if (texture == null)
-        {
-            // fallback to first available
-            for (int i = 0; i < plantTextures.Length; i++) if (plantTextures[i] != null) { texture = plantTextures[i]; break; }
-            if (texture == null) return;
-        }
+        const int MaxPlantQuadsPerCluster = 8;
+        count = Mathf.Clamp(count, 1, MaxPlantQuadsPerCluster);
+        if (texture == null) return;
 
         // Build a combined mesh with 'count' crossed-quads
         var mf = parent.AddComponent<MeshFilter>();
@@ -1569,14 +1756,14 @@ public class WorldGenerator : MonoBehaviour
             float off = 0.18f;
             float ox = (float)(rng.NextDouble()*2 - 1) * off;
             float oz = (float)(rng.NextDouble()*2 - 1) * off;
-            float h = Mathf.Lerp(0.6f, 1.2f, (float)rng.NextDouble());
+            float h = Mathf.Lerp(heightRange.x, heightRange.y, (float)rng.NextDouble());
             maxH = Mathf.Max(maxH, h);
 
             // Two quads centered on origin; we build them aligned (like PlantBillboard) and offset
             int vStart = vertices.Count;
-            float halfW = 0.45f;
-            float y0 = 0.02f; // small lift to avoid z-fighting/embedding
-            float y1 = h + 0.02f;
+            float halfW = Mathf.Clamp(width, 0.1f, 2f) * 0.5f;
+            float y0 = yOffset; // small lift to avoid z-fighting/embedding
+            float y1 = h + yOffset;
 
             // Quad A (along Z)
             vertices.Add(new Vector3(-halfW + ox, y0, 0 + oz));
@@ -1614,7 +1801,7 @@ public class WorldGenerator : MonoBehaviour
         mf.sharedMesh = mesh;
 
         // Assign shared material (cached by texture)
-        mr.sharedMaterial = GetPlantSharedMaterial(texture);
+    mr.sharedMaterial = GetPlantSharedMaterial(texture);
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         mr.receiveShadows = false;
 
@@ -1624,6 +1811,77 @@ public class WorldGenerator : MonoBehaviour
         float radius = 0.6f; // encompass offsets
         col.size = new Vector3(radius, Mathf.Max(0.6f, maxH), radius);
         col.center = new Vector3(0f, 0.01f + col.size.y * 0.5f, 0f);
+    }
+
+    // --- Plant reflection helpers ---
+    private bool PlantDB_HasAny()
+    {
+        if (plantDatabase == null) return false;
+        var dbType = plantDatabase.GetType();
+        // Try property HasAny
+        var hasAnyProp = dbType.GetProperty("HasAny");
+        if (hasAnyProp != null && hasAnyProp.PropertyType == typeof(bool))
+        {
+            return (bool)hasAnyProp.GetValue(plantDatabase);
+        }
+        // Fallback: iterate plants array and check texture
+        var plantsField = dbType.GetField("plants");
+        if (plantsField == null) return false;
+        var arr = plantsField.GetValue(plantDatabase) as System.Array;
+        if (arr == null) return false;
+        foreach (var def in arr)
+        {
+            if (def == null) continue;
+            var tex = PlantDef_GetTexture(def);
+            var weightField = def.GetType().GetField("weight");
+            float w = weightField != null ? Mathf.Max(0f, (float)(weightField.GetValue(def) ?? 0f)) : 1f;
+            if (tex != null && w > 0f) return true;
+        }
+        return false;
+    }
+
+    private object PlantDB_PickByWeight(System.Random rng)
+    {
+        if (plantDatabase == null) return null;
+        var dbType = plantDatabase.GetType();
+        var pick = dbType.GetMethod("PickByWeight", new System.Type[] { typeof(System.Random) });
+        if (pick != null)
+        {
+            return pick.Invoke(plantDatabase, new object[] { rng });
+        }
+        // Fallback: simple first non-null
+        var plantsField = dbType.GetField("plants");
+        var arr = plantsField?.GetValue(plantDatabase) as System.Array;
+        if (arr == null || arr.Length == 0) return null;
+        foreach (var def in arr) if (def != null) return def;
+        return null;
+    }
+
+    private Texture2D PlantDef_GetTexture(object def)
+    {
+        if (def == null) return null;
+        return def.GetType().GetField("texture")?.GetValue(def) as Texture2D;
+    }
+
+    private Vector2 PlantDef_GetHeightRange(object def)
+    {
+        if (def == null) return new Vector2(0.6f, 1.2f);
+        var f = def.GetType().GetField("heightRange");
+        return f != null ? (Vector2)f.GetValue(def) : new Vector2(0.6f, 1.2f);
+    }
+
+    private float PlantDef_GetWidth(object def)
+    {
+        if (def == null) return 0.9f;
+        var f = def.GetType().GetField("width");
+        return f != null ? Mathf.Clamp((float)(f.GetValue(def) ?? 0.9f), 0.1f, 2f) : 0.9f;
+    }
+
+    private float PlantDef_GetYOffset(object def)
+    {
+        if (def == null) return 0.02f;
+        var f = def.GetType().GetField("yOffset");
+        return f != null ? (float)(f.GetValue(def) ?? 0.02f) : 0.02f;
     }
 
     private Material GetPlantSharedMaterial(Texture2D texture)

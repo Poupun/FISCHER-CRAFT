@@ -166,54 +166,18 @@ MonoBehaviour:
   enableChunkPersistence: 1
   saveFolderName: ChunkSaves
   blockPrefab: {fileID: 8370143156882375915, guid: 80ba404bf0581704bb0ca88f410774a6, type: 3}
-  applyFlatAmbientLighting: 0
-  ambientColor: {r: 0.35, g: 0.35, b: 0.35, a: 1}
   delayPlayerSpawnUntilChunks: 1
   snapPlayerToGroundOnSpawn: 1
-  grassTexture: {fileID: 2800000, guid: 25dca7ca405ee904f9c98eafa4c0a9db, type: 3}
-  grassSideTexture: {fileID: 0}
+  grassTexture: {fileID: 2800000, guid: 066d2f2f39512774da5b727fe4ff791f, type: 3}
+  grassSideTexture: {fileID: 2800000, guid: 063390b76bb116d498c69cd9e8fb611d, type: 3}
   dirtTexture: {fileID: 2800000, guid: 37db4ec71f0a4344aa93ab0ea4c9146b, type: 3}
   stoneTexture: {fileID: 2800000, guid: 84efa5e9958edd54dba17316450a33d6, type: 3}
   sandTexture: {fileID: 2800000, guid: 00b0e9986577d2c40ab38f6ddf5f069c, type: 3}
   coalTexture: {fileID: 2800000, guid: a8344bd098c463e48abe84da6ea0d3a1, type: 3}
-  plantTextures:
-  - {fileID: 2800000, guid: 56924875ee2c4bc43a5779ea13fed052, type: 3}
-  - {fileID: 2800000, guid: d71f9159dd9acb041a06bca3a868f9d7, type: 3}
-  - {fileID: 2800000, guid: de7916a6a49d58c48829829e0976367f, type: 3}
-  - {fileID: 2800000, guid: f14461ec2f50d6840818f0600fb805b0, type: 3}
-  - {fileID: 2800000, guid: 0bbc662f25356c843b1a1355fada4837, type: 3}
-  - {fileID: 2800000, guid: 64c8dbcbbeb59814da23ec55487d7ed1, type: 3}
-  - {fileID: 2800000, guid: 46f432f1cd506784aaea14874e0fe693, type: 3}
-  - {fileID: 2800000, guid: f8ed8c3bd926a174ebe89b1c6ba64a1c, type: 3}
-  plantDensity: 3
-  plantRarityCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: 0
-      outSlope: -1
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 0
-      inSlope: -1
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  plantClusterMaxQuads: 3
-  plantsCombineIntoSingleRenderer: 1
+  plantDatabase: {fileID: 11400000, guid: 44330b0a711c68847915c9e2a961c5ee, type: 2}
+  plantDensity: 1
   textureScaleVariation: 1
-  textureOffsetVariation: 0.1
+  textureOffsetVariation: 0
   tickIntervalSeconds: 0.5
   plantRespawnDelayTicks: 5
   newGrassPlantDelayTicks: 5
@@ -274,7 +238,7 @@ Light:
   m_Enabled: 1
   serializedVersion: 11
   m_Type: 1
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 1, g: 1, b: 1, a: 0}
   m_Intensity: 1
   m_Range: 10
   m_SpotAngle: 30
@@ -318,8 +282,8 @@ Light:
   m_LightShadowCasterMode: 0
   m_AreaSize: {x: 1, y: 1}
   m_BounceIntensity: 1
-  m_ColorTemperature: 6570
-  m_UseColorTemperature: 0
+  m_ColorTemperature: 5449
+  m_UseColorTemperature: 1
   m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 0}
   m_UseBoundingSphereOverride: 0
   m_UseViewFrustumForShadowCasterCull: 1
@@ -337,13 +301,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1073604322}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.6468095, y: -0.19222447, z: 0.17331219, w: 0.7173912}
+  m_LocalRotation: {x: 0.43974176, y: -0.14098158, z: 0.2170521, w: 0.8600232}
   m_LocalPosition: {x: 0, y: 3, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 84.077, y: -30, z: 0}
+  m_LocalEulerAnglesHint: {x: 54.843, y: -5.141, z: 25.66}
 --- !u!114 &1073604325
 MonoBehaviour:
   m_ObjectHideFlags: 0

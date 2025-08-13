@@ -102,26 +102,6 @@ namespace WorldGeneration.Chunks
                             // Simple UVs
                             uvs.Add(QuadUV[0]); uvs.Add(QuadUV[1]); uvs.Add(QuadUV[2]); uvs.Add(QuadUV[3]);
 
-                            // Special-case: Grass side faces are composed of Dirt base + GrassSide overlay (alpha-cutout).
-                            if (world != null && t == BlockType.Grass && (d == 0 || d == 1 || d == 4 || d == 5))
-                            {
-                                var dirtMat = world.GetBlockMaterial(BlockType.Dirt);
-                                if (dirtMat != null)
-                                {
-                                    var triD = GetList(dirtMat);
-                                    triD.Add(vi + 0); triD.Add(vi + 1); triD.Add(vi + 2);
-                                    triD.Add(vi + 0); triD.Add(vi + 2); triD.Add(vi + 3);
-                                }
-                                var overlayMat = world.GetGrassSideOverlayMaterial();
-                                if (overlayMat != null)
-                                {
-                                    var triO = GetList(overlayMat);
-                                    triO.Add(vi + 0); triO.Add(vi + 1); triO.Add(vi + 2);
-                                    triO.Add(vi + 0); triO.Add(vi + 2); triO.Add(vi + 3);
-                                }
-                                continue;
-                            }
-
                             // Choose single material per face (e.g., top/bottom or non-grass blocks)
                             Material faceMat = null;
                             if (world != null)

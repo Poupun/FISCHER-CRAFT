@@ -191,6 +191,20 @@ public class PlayerController : MonoBehaviour
             Vector3Int hitCell, placeCell; Vector3 hitNormal;
             if (worldGenerator.TryVoxelRaycast(ray, interactionRange, out hitCell, out placeCell, out hitNormal))
             {
+                // First: if the target is a batched plant (plant cell = hitCell if air? or hitCell+up?).
+                // We raycast blocks; if we hit a solid block with Air above that hosts a plant, player expects to break plant first when aiming slightly above.
+                var above = hitCell + Vector3Int.up;
+                if (worldGenerator.HasBatchedPlantAt(above))
+                {
+                    worldGenerator.RemoveBatchedPlantAt(above);
+                    return;
+                }
+                // If we hit air cell (placeCell) that actually contains a batched plant
+                if (worldGenerator.HasBatchedPlantAt(hitCell))
+                {
+                    worldGenerator.RemoveBatchedPlantAt(hitCell);
+                    return;
+                }
                 // Break the hit block and collect drop
                 var t = worldGenerator.GetBlockType(hitCell);
                 if (t != BlockType.Air)
@@ -227,6 +241,11 @@ public class PlayerController : MonoBehaviour
                     // Ensure we choose the cell that holds plantObjects (above support)
                     // Ray usually hits the plant at y ~ top; get the integer cell and ensure support below is Grass
                     Vector3Int support = cell + Vector3Int.down;
+                    if (worldGenerator.useChunkStreaming && worldGenerator.useChunkMeshing && worldGenerator.HasBatchedPlantAt(cell))
+                    {
+                        worldGenerator.RemoveBatchedPlantAt(cell);
+                        return;
+                    }
                     if (worldGenerator.GetBlockType(support) == BlockType.Grass)
                     {
                         worldGenerator.RemovePlantAt(cell);
