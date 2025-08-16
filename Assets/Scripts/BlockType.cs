@@ -9,7 +9,9 @@ public enum BlockType
     Stone,
     Water,
     Sand,
-    Coal
+    Coal,
+    Log,
+    Leaves
 }
 
 [System.Serializable]
@@ -47,7 +49,9 @@ public static class BlockDatabase
         new BlockData(BlockType.Stone, "Stone", Color.gray),
         new BlockData(BlockType.Water, "Water", Color.blue),
         new BlockData(BlockType.Sand, "Sand", Color.white),
-        new BlockData(BlockType.Coal, "Coal", Color.black)
+    new BlockData(BlockType.Coal, "Coal", Color.black),
+    new BlockData(BlockType.Log, "Log", new Color(0.55f, 0.27f, 0.07f)),
+    new BlockData(BlockType.Leaves, "Leaves", new Color(0.2f, 0.6f, 0.2f))
     };
     
     public static BlockData GetBlockData(BlockType blockType)

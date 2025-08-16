@@ -14,6 +14,8 @@ public class PlantChunkRenderer : MonoBehaviour
 
     private readonly Dictionary<Material, List<Vector3>> _verts = new();
     private readonly Dictionary<Material, List<Vector2>> _uvs = new();
+    // Per-material vertex colors (used for wind bend weight: bottom=0, top=1)
+    private readonly Dictionary<Material, List<Color>> _colors = new();
     private readonly Dictionary<Material, List<int>> _tris = new();
     private readonly Dictionary<Material, Mesh> _meshes = new();
     private readonly Dictionary<Material, GameObject> _children = new();
@@ -34,7 +36,7 @@ public class PlantChunkRenderer : MonoBehaviour
                 if (child != null) Destroy(child);
             }
             _children.Clear();
-            _verts.Clear(); _uvs.Clear(); _tris.Clear(); _meshes.Clear(); _dummyIndex.Clear();
+            _verts.Clear(); _uvs.Clear(); _colors.Clear(); _tris.Clear(); _meshes.Clear(); _dummyIndex.Clear();
             if (!preserveTracking) _cellToRanges.Clear();
         }
 
@@ -43,6 +45,7 @@ public class PlantChunkRenderer : MonoBehaviour
             if (def == null || mat == null) return;
             if (!_verts.TryGetValue(mat, out var v)) { v = new List<Vector3>(); _verts[mat] = v; }
             if (!_uvs.TryGetValue(mat, out var u)) { u = new List<Vector2>(); _uvs[mat] = u; }
+            if (!_colors.TryGetValue(mat, out var c)) { c = new List<Color>(); _colors[mat] = c; }
             if (!_tris.TryGetValue(mat, out var t)) { t = new List<int>(); _tris[mat] = t; }
 
             int cluster = Mathf.Clamp(def.quadsPerInstance, 1, 4);
@@ -72,6 +75,9 @@ public class PlantChunkRenderer : MonoBehaviour
                 // UVs
                 u.Add(QuadUV[0]); u.Add(QuadUV[1]); u.Add(QuadUV[2]); u.Add(QuadUV[3]);
                 u.Add(QuadUV[0]); u.Add(QuadUV[1]); u.Add(QuadUV[2]); u.Add(QuadUV[3]);
+                // Colors (weights) bottom verts weight 0, top verts weight 1
+                c.Add(new Color(0,0,0,1)); c.Add(new Color(0,0,0,1)); c.Add(new Color(1,1,1,1)); c.Add(new Color(1,1,1,1));
+                c.Add(new Color(0,0,0,1)); c.Add(new Color(0,0,0,1)); c.Add(new Color(1,1,1,1)); c.Add(new Color(1,1,1,1));
                 // Triangles (double-sided)
                 // A
                 int triStart = t.Count; // capture start for cell mapping
@@ -115,6 +121,43 @@ public class PlantChunkRenderer : MonoBehaviour
                 var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
                 mesh.SetVertices(v);
                 mesh.SetUVs(0, u);
+                // Safe color weight application: handle legacy data where colors might be missing
+                if (!_colors.TryGetValue(mat, out var cList) || cList == null || cList.Count != v.Count)
+                {
+                    // Reconstruct weights assuming vertex pattern added in groups of 8:
+                    // indices [0,1]=bottom, [2,3]=top, [4,5]=bottom, [6,7]=top
+                    cList = new List<Color>(v.Count);
+                    for (int i = 0; i < v.Count; i += 8)
+                    {
+                        // Guard if final partial group (should not happen but be safe)
+                        int remain = v.Count - i;
+                        if (remain >= 8)
+                        {
+                            cList.Add(new Color(0,0,0,1)); // 0
+                            cList.Add(new Color(0,0,0,1)); // 1
+                            cList.Add(new Color(1,1,1,1)); // 2
+                            cList.Add(new Color(1,1,1,1)); // 3
+                            cList.Add(new Color(0,0,0,1)); // 4
+                            cList.Add(new Color(0,0,0,1)); // 5
+                            cList.Add(new Color(1,1,1,1)); // 6
+                            cList.Add(new Color(1,1,1,1)); // 7
+                        }
+                        else
+                        {
+                            // Fallback: linear gradient by Y within this leftover slice
+                            for (int j = 0; j < remain; j++)
+                            {
+                                var y = v[i + j].y;
+                                float minY = v[i].y;
+                                float maxY = v[i].y;
+                                for (int k = 0; k < remain; k++) { float yy = v[i + k].y; if (yy < minY) minY = yy; if (yy > maxY) maxY = yy; }
+                                float w = maxY > minY ? (y - minY) / (maxY - minY) : 0f;
+                                cList.Add(new Color(w,w,w,1));
+                            }
+                        }
+                    }
+                }
+                mesh.SetColors(cList);
                 mesh.SetTriangles(t, 0);
                 mesh.RecalculateBounds();
                 mesh.RecalculateNormals();
@@ -125,6 +168,7 @@ public class PlantChunkRenderer : MonoBehaviour
             }
 
             _verts.Clear(); _uvs.Clear(); _tris.Clear();
+            _colors.Clear();
         }
         // Overload that accepts primitive parameters instead of PlantDefinition (for reflection-friendly callers)
     public void AddPlantCluster(Vector3 localPos, Vector2 heightRange, float width, float yOffset, int quadsPerInstance, Material mat, System.Random rng, Vector3Int? plantCell = null)

@@ -1,6 +1,6 @@
 {
   "servers": {
-    "dsf-MCP": {
+    "dsfgd-MCP": {
       "command": "D:/Unity/test/FISCHER-CRAFT/Library/com.ivanmurzak.unity.mcp.server/bin~/Release/net9.0/com.IvanMurzak.Unity.MCP.Server",
       "args": [
         "--port=60606",

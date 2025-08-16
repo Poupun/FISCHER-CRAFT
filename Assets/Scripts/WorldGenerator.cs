@@ -78,6 +78,8 @@ public class WorldGenerator : MonoBehaviour
     public Texture2D stoneTexture;
     public Texture2D sandTexture;
     public Texture2D coalTexture;
+    public Texture2D logTexture;
+    public Texture2D leavesTexture;
 
     [Header("Plants (New)")]
     [Tooltip("Scriptable Object list of plants with textures, sizes, and weights.")]
@@ -91,6 +93,18 @@ public class WorldGenerator : MonoBehaviour
     
     [Range(0f, 0.3f)]
     public float textureOffsetVariation = 0.1f;
+
+    [Header("Voxel Face Shading (Depth Illusion)")]
+    [Tooltip("Apply simple directional face shading like Minecraft to add depth without lights.")]
+    public bool enableFaceShading = true;
+    [Tooltip("Brightness multiplier for east/west faces (X axis). 1 = no change.")]
+    [Range(0.3f,1.2f)] public float eastWestShade = 0.9f;
+    [Tooltip("Brightness multiplier for north/south faces (Z axis). 1 = no change.")]
+    [Range(0.3f,1.2f)] public float northSouthShade = 0.85f;
+    [Tooltip("Brightness multiplier for bottom faces (Y-).")]
+    [Range(0.1f,1.0f)] public float bottomShade = 0.7f;
+    [Tooltip("Random per-block shade variation strength (0 disables variation).")]
+    [Range(0f,0.3f)] public float variationStrength = 0.08f;
     
     private BlockType[,,] worldData;
     private Dictionary<Vector3Int, GameObject> blockObjects = new Dictionary<Vector3Int, GameObject>();
@@ -102,6 +116,103 @@ public class WorldGenerator : MonoBehaviour
     private TextureVariationManager textureManager;
     // Cache for plant materials by texture so we don't create per-instance materials
     private readonly Dictionary<Texture2D, Material> _plantMaterialCache = new Dictionary<Texture2D, Material>();
+
+    [Header("Trees")] 
+    [Tooltip("Enable procedural tree generation (advanced)." )]
+    public bool enableTrees = true;
+    [Tooltip("Average number of trees per chunk (scaled by noise + randomness)." )]
+    [Min(0f)] public float treesPerChunk = 6f;
+    [Tooltip("Seed offset for tree placement noise.")]
+    public int treeSeedOffset = 98765;
+    [Header("Tree Height")] 
+    [Range(6,64)] public int minTrunkHeight = 8;
+    [Range(8,128)] public int maxTrunkHeight = 24;
+    [Header("Canopy Shape")] 
+    [Range(2,16)] public int leavesRadius = 5; // base horizontal radius at widest point
+    [Range(2,24)] public int leavesDepth = 7;   // base vertical half-thickness downward from canopy top
+    [Tooltip("If enabled, canopy radius/depth grow with trunk height above the minimum.")]
+    public bool autoScaleCanopyWithHeight = true;
+    [Tooltip("Extra canopy radius added per block of trunk height above min.")]
+    [Range(0f,0.5f)] public float canopyRadiusGrowthPerBlock = 0.12f;
+    [Tooltip("Extra canopy depth added per block of trunk height above min.")]
+    [Range(0f,0.5f)] public float canopyDepthGrowthPerBlock = 0.10f;
+    [Header("Canopy Style")] 
+    [Tooltip("If true, generate near-spherical (ellipsoid) canopies with minimal randomness.")]
+    public bool sphericalCanopy = false;
+    [Tooltip("Remove isolated / stray leaves after generation (only in spherical mode or when desired).")]
+    public bool pruneLooseLeaves = true;
+    [Tooltip("Minimum number of neighboring leaf blocks (6-neighborhood) required to keep a leaf when pruning.")]
+    [Range(0,6)] public int leafPruneNeighborThreshold = 2;
+    [Range(0f,0.6f)] public float leavesSparsity = 0.08f;
+    [Range(0f,1f)] public float canopyRoundness = 0.65f; // 0=cubic,1=spherical metric blend
+    [Range(0f,1f)] public float canopyDomeBias = 0.35f;   // flatten underside (0 full sphere,1 strong dome)
+    [Header("Branches")]
+    [Range(0,12)] public int maxPrimaryBranches = 5;
+    [Range(0,8)] public int maxSecondaryBranches = 3;
+    [Range(2,12)] public int branchMinLength = 3;
+    [Range(3,18)] public int branchMaxLength = 8;
+    [Range(1,4)] public int branchThickness = 1;
+    [Range(0f,1f)] public float branchSpawnProbability = 0.55f;
+    [Range(0f,1f)] public float secondaryBranchProbability = 0.35f;
+    [Range(0f,1f)] public float branchUpBias = 0.4f; // chance upward step per segment
+    [Range(0f,1f)] public float canopyTrimUnderBranches = 0.35f; // trim dense leaves below center near trunk
+    [Tooltip("Fraction of trunk height used to cap branch max length.")]
+    [Range(0f,1f)] public float branchLengthFactor = 0.5f;
+    [Tooltip("Guaranteed dense leaf core (normalized sphere distance).")]
+    [Range(0f,1f)] public float canopyCoreFill = 0.4f;
+    [Tooltip("Radius (blocks) of leaf puff added at each branch tip.")]
+    [Range(0,6)] public int branchTipLeafRadius = 2;
+    [Tooltip("Minimum normalized shell band always filled (prevents hollow canopy). 0 = off.")]
+    [Range(0f,0.6f)] public float canopyShellGuarantee = 0.15f;
+    [Tooltip("If true, prevent trees from spawning too close (Manhattan distance)." )]
+    public bool enforceTreeSpacing = true;
+    [Tooltip("Minimum Manhattan spacing between tree trunks.")]
+    [Range(1,32)] public int treeSpacing = 6;
+    private readonly HashSet<Vector3Int> _treeTrunkPositions = new HashSet<Vector3Int>();
+    [Tooltip("If true, trees are only spawned when their full canopy fits inside the chunk to avoid cut trees at borders.")]
+    public bool constrainTreesInsideChunk = true;
+
+    [Header("Leaf Wind Animation")] 
+    [Tooltip("Enable subtle shader-based wind sway for leaf blocks (vertex animation).")]
+    public bool enableLeafWind = true;
+    [Range(0f,0.2f)] public float leafWindAmplitude = 0.05f;
+    [Range(0.1f,5f)] public float leafWindSpeed = 1.2f;
+    [Range(0.1f,2f)] public float leafWindScale = 0.5f; // spatial frequency influence
+    [Range(0f,1f)] public float leafWindVerticalFactor = 0.3f; // proportion of motion applied vertically
+    [Tooltip("Wind direction on XZ plane.")]
+    public Vector2 leafWindDirection = new Vector2(1f, 0.3f);
+
+    // Small integer hash for variation (kept here for chunk mesher)
+    public static float Hash(int x, int y, int z)
+    {
+        unchecked
+        {
+            int h = x * 73856093 ^ y * 19349663 ^ z * 83492791;
+            h ^= (h >> 13);
+            h *= 60493;
+            h ^= (h >> 17);
+            // Map to 0..1
+            return (h & 0x7FFFFFFF) / (float)int.MaxValue;
+        }
+    }
+
+    [Header("Plant Wind Animation")] 
+    [Tooltip("Enable wind sway for grass/plant billboards.")]
+    public bool enablePlantWind = true;
+    [Range(0f,0.25f)] public float plantWindAmplitude = 0.07f;
+    [Range(0.1f,5f)] public float plantWindSpeed = 1.4f;
+    [Range(0.1f,3f)] public float plantWindScale = 0.8f;
+    [Range(0f,1f)] public float plantWindVerticalFactor = 0.2f;
+    [Tooltip("Per-plant randomization factor (0 = uniform motion).")]
+    [Range(0f,1f)] public float plantWindVariation = 0.5f;
+
+    [Header("Debug / Reload")] 
+    [Tooltip("If true, a reload will discard persisted chunk edits (fresh world)." )]
+    public bool clearSavedEditsOnReload = false;
+    [Tooltip("If true when reloading, a new random seed will be chosen.")]
+    public bool reseedOnReload = false;
+    [Tooltip("Helper flag you can tick in play mode to trigger a reload; auto-resets.")]
+    public bool triggerReloadInPlay = false;
     
     // Tick system for delayed plant behavior
     [Header("Tick Settings")]
@@ -155,6 +266,48 @@ public class WorldGenerator : MonoBehaviour
     
     void Update()
     {
+        // Update leaf wind material params each frame (cheap, single material)
+        if (enableLeafWind && blockMaterials != null && (int)BlockType.Leaves < blockMaterials.Length)
+        {
+            var lm = blockMaterials[(int)BlockType.Leaves];
+            if (lm != null)
+            {
+                if (lm.shader != null && lm.shader.name == "Custom/LeavesWind")
+                {
+                    lm.SetFloat("_WindAmp", leafWindAmplitude);
+                    lm.SetFloat("_WindSpeed", leafWindSpeed);
+                    lm.SetFloat("_WindScale", leafWindScale);
+                    lm.SetFloat("_WindVertical", leafWindVerticalFactor);
+                    Vector2 dir = leafWindDirection.sqrMagnitude < 0.0001f ? new Vector2(1,0) : leafWindDirection.normalized;
+                    lm.SetVector("_WindDir", new Vector4(dir.x, dir.y, 0, 0));
+                }
+            }
+        }
+        // Update plant wind
+        if (enablePlantWind && _plantMaterialCache != null)
+        {
+            foreach (var kv in _plantMaterialCache)
+            {
+                var pm = kv.Value;
+                if (pm == null) continue;
+                if (pm.shader != null && pm.shader.name == "Custom/PlantWind")
+                {
+                    pm.SetFloat("_WindAmp", plantWindAmplitude);
+                    pm.SetFloat("_WindSpeed", plantWindSpeed);
+                    pm.SetFloat("_WindScale", plantWindScale);
+                    pm.SetFloat("_WindVertical", plantWindVerticalFactor);
+                    pm.SetFloat("_WindVar", plantWindVariation);
+                    Vector2 dir = leafWindDirection.sqrMagnitude < 0.0001f ? new Vector2(1,0) : leafWindDirection.normalized; // reuse leaf direction
+                    pm.SetVector("_WindDir", new Vector4(dir.x, dir.y, 0, 0));
+                }
+            }
+        }
+        // Debug trigger reload
+        if (Application.isPlaying && triggerReloadInPlay)
+        {
+            triggerReloadInPlay = false; // reset flag
+            ReloadWorld();
+        }
         // Tick scheduler processing
         _tickAccum += Time.deltaTime;
         while (_tickAccum >= tickIntervalSeconds)
@@ -180,6 +333,75 @@ public class WorldGenerator : MonoBehaviour
             }
         }
     }
+
+    /// <summary>
+    /// Public debug-friendly API to fully reload the world (clears streamed chunks and regenerated content).
+    /// </summary>
+    public void ReloadWorld()
+    {
+        StopAllCoroutines();
+
+        // Optionally reseed
+        if (reseedOnReload)
+        {
+            worldSeed = UnityEngine.Random.Range(int.MinValue / 2, int.MaxValue / 2);
+        }
+
+        // Persist current chunks before wiping (unless clearing edits)
+        if (enableChunkPersistence && !clearSavedEditsOnReload)
+        {
+            foreach (var kv in _chunks)
+            {
+                SaveChunkToDisk(kv.Key);
+            }
+        }
+        // Unload existing chunk GameObjects
+        foreach (var kv in _chunks)
+        {
+            kv.Value.Unload(this);
+        }
+        _chunks.Clear();
+        _pendingLoads.Clear();
+        _queued.Clear();
+        _loading.Clear();
+        blockObjects.Clear();
+        plantObjects.Clear();
+        _treeTrunkPositions.Clear();
+        _scheduledPlantCells.Clear();
+        _scheduledGrassCells.Clear();
+        _tickQueue.Clear();
+        if (clearSavedEditsOnReload)
+        {
+            _chunkEdits.Clear();
+            // Wipe on-disk saves directory
+            try
+            {
+                var dir = GetSaveFolderPath();
+                if (System.IO.Directory.Exists(dir)) System.IO.Directory.Delete(dir, true);
+            }
+            catch { /* ignore */ }
+        }
+
+        // Non-streaming world data clear
+        if (!useChunkStreaming)
+        {
+            worldData = null;
+        }
+
+        if (useChunkStreaming)
+        {
+            EnsureChunksRoot();
+            UpdateStreaming(force: true);
+            if (delayPlayerSpawnUntilChunks)
+            {
+                StartCoroutine(StartupPlayerGate());
+            }
+        }
+        else
+        {
+            GenerateWorld();
+        }
+    }
     
     
     void LoadTextures()
@@ -191,6 +413,8 @@ public class WorldGenerator : MonoBehaviour
     if (stoneTexture == null) stoneTexture = Resources.Load<Texture2D>("Textures/stone");
     if (sandTexture == null) sandTexture = Resources.Load<Texture2D>("Textures/sand");
     if (coalTexture == null) coalTexture = Resources.Load<Texture2D>("Textures/coal");
+    if (logTexture == null) logTexture = Resources.Load<Texture2D>("Textures/log");
+    if (leavesTexture == null) leavesTexture = Resources.Load<Texture2D>("Textures/leaves");
 
         // Configure plant textures from PlantDatabase (set via ScriptableObjects)
         if (plantDatabase != null)
@@ -220,6 +444,8 @@ public class WorldGenerator : MonoBehaviour
     if (stoneTexture == null) stoneTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/stone.png");
     if (sandTexture == null) sandTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/sand.png");
     if (coalTexture == null) coalTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/coal.png");
+    if (logTexture == null) logTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/log.png");
+    if (leavesTexture == null) leavesTexture = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/leaves.png");
 
     // Plants are assigned via PlantDatabase assets in the editor.
 #endif
@@ -231,6 +457,8 @@ public class WorldGenerator : MonoBehaviour
         ConfigureTexture(stoneTexture);
         ConfigureTexture(sandTexture);
         ConfigureTexture(coalTexture);
+    ConfigureTexture(logTexture);
+    ConfigureTexture(leavesTexture);
     // Plant textures are configured via PlantDatabase above
         
         // Assign textures to block data
@@ -239,6 +467,8 @@ public class WorldGenerator : MonoBehaviour
         BlockDatabase.blockTypes[(int)BlockType.Stone].blockTexture = stoneTexture;
         BlockDatabase.blockTypes[(int)BlockType.Sand].blockTexture = sandTexture;
         BlockDatabase.blockTypes[(int)BlockType.Coal].blockTexture = coalTexture;
+    BlockDatabase.blockTypes[(int)BlockType.Log].blockTexture = logTexture;
+    BlockDatabase.blockTypes[(int)BlockType.Leaves].blockTexture = leavesTexture;
     }
     
     void ConfigureTexture(Texture2D texture)
@@ -283,6 +513,26 @@ public class WorldGenerator : MonoBehaviour
                 mat.name = BlockDatabase.blockTypes[i].blockName + "Material";
                 blockMaterials[i] = mat;
                 BlockDatabase.blockTypes[i].blockMaterial = mat;
+            }
+        }
+
+        // Leaves need alpha clip & double sided tweaks if texture provided
+        if (BlockDatabase.blockTypes[(int)BlockType.Leaves].blockMaterial != null)
+        {
+            var lm = BlockDatabase.blockTypes[(int)BlockType.Leaves].blockMaterial;
+            lm.SetFloat("_AlphaClip", 1f);
+            lm.SetFloat("_Cutoff", 0.35f);
+            lm.EnableKeyword("_ALPHATEST_ON");
+            lm.SetFloat("_Cull", 2f); // back-face culling keeps interior cheaper; foliage is thick
+            lm.renderQueue = (int)RenderQueue.AlphaTest + 10; // after other alpha test to reduce sorting flicker
+            // Try swap to custom wind shader if present
+            if (enableLeafWind)
+            {
+                var ws = Shader.Find("Custom/LeavesWind");
+                if (ws != null)
+                {
+                    lm.shader = ws;
+                }
             }
         }
 
@@ -348,6 +598,17 @@ public class WorldGenerator : MonoBehaviour
     public Material GetGrassSideOverlayMaterial()
     {
         return _grassSideOverlayMaterial;
+    }
+
+    // Determine if a block type should occlude adjacent faces (used for meshing & visibility tests)
+    public bool IsBlockOpaque(BlockType t)
+    {
+        switch (t)
+        {
+            case BlockType.Air: return false;
+            case BlockType.Leaves: return false; // leaves are cutout; allow rendering faces behind
+            default: return true;
+        }
     }
     
     void GenerateWorld()
@@ -643,6 +904,12 @@ public class WorldGenerator : MonoBehaviour
             }
         }
 
+        // Trees (before meshing so logs/leaves are part of mesh). Only procedural if not already edited at those cells.
+        if (enableTrees)
+        {
+            GenerateTreesInChunk(chunk);
+        }
+
     // Register chunk early so GetBlockType works during spawning logic
     _chunks[coord] = chunk;
 
@@ -821,7 +1088,9 @@ public class WorldGenerator : MonoBehaviour
         foreach (Vector3Int dir in directions)
         {
             Vector3Int neighbor = new Vector3Int(x, y, z) + dir;
-            if (IsOutOfBounds(neighbor) || GetBlockType(neighbor) == BlockType.Air)
+            if (IsOutOfBounds(neighbor)) return true;
+            var nt = GetBlockType(neighbor);
+            if (nt == BlockType.Air || !IsBlockOpaque(nt))
             {
                 return true;
             }
@@ -1257,6 +1526,297 @@ public class WorldGenerator : MonoBehaviour
         
         
         return true;
+    }
+
+    // ----------------- TREE GENERATION -----------------
+    private void GenerateTreesInChunk(WorldGeneration.Chunks.Chunk chunk)
+    {
+        if (!enableTrees) return;
+        int seed = worldSeed ^ treeSeedOffset ^ (chunk.coord.x * 734287 + chunk.coord.y * 912931);
+        System.Random rng = new System.Random(seed);
+        float baseNoise = EvaluateHeightNoise(chunk.coord.x * chunk.sizeX, chunk.coord.y * chunk.sizeZ); // [-1,1]
+        float densityScale = Mathf.Clamp01(0.55f + 0.45f * (baseNoise * 0.5f + 0.5f));
+        int target = Mathf.Max(0, Mathf.RoundToInt(treesPerChunk * densityScale));
+        int attempts = target * 4 + 24;
+        int placed = 0;
+    for (int a = 0; a < attempts && placed < target; a++)
+        {
+            int lx = rng.Next(0, chunk.sizeX);
+            int lz = rng.Next(0, chunk.sizeZ);
+            // Determine provisional canopy size for border check (scaled if feature enabled using expected average trunk height)
+            int provisionalTrunk = Mathf.Clamp((minTrunkHeight + maxTrunkHeight) / 2, minTrunkHeight, maxTrunkHeight);
+            int growthBlocks = Mathf.Max(0, provisionalTrunk - minTrunkHeight);
+            int scaledRadiusForCheck = leavesRadius;
+            if (autoScaleCanopyWithHeight)
+            {
+                float addR = growthBlocks * canopyRadiusGrowthPerBlock;
+                scaledRadiusForCheck = Mathf.Clamp(Mathf.RoundToInt(leavesRadius + addR), leavesRadius, leavesRadius + 32);
+            }
+            if (constrainTreesInsideChunk && (lx - scaledRadiusForCheck < 0 || lx + scaledRadiusForCheck >= chunk.sizeX || lz - scaledRadiusForCheck < 0 || lz + scaledRadiusForCheck >= chunk.sizeZ))
+                continue;
+            int groundY = -1;
+            for (int ly = chunk.sizeY - 3; ly >= 1; ly--)
+            {
+                if (chunk.GetLocal(lx, ly, lz) == BlockType.Grass && chunk.GetLocal(lx, ly + 1, lz) == BlockType.Air)
+                { groundY = ly; break; }
+            }
+            if (groundY < 0) continue;
+            var basePos = chunk.LocalToWorld(new Vector3Int(lx, groundY + 1, lz));
+            if (enforceTreeSpacing)
+            {
+                bool tooClose = false;
+                foreach (var p in _treeTrunkPositions)
+                {
+                    int manhattan = Mathf.Abs(p.x - basePos.x) + Mathf.Abs(p.z - basePos.z);
+                    if (manhattan < treeSpacing) { tooClose = true; break; }
+                }
+                if (tooClose) continue;
+            }
+            int trunkH = rng.Next(minTrunkHeight, maxTrunkHeight + 1);
+            if (basePos.y + trunkH + leavesDepth + 4 >= worldHeight)
+                trunkH = Mathf.Max(6, worldHeight - basePos.y - leavesDepth - 5);
+            if (trunkH < 6) continue;
+            // Trunk
+            for (int dy = 0; dy < trunkH; dy++)
+            {
+                var wp = new Vector3Int(basePos.x, basePos.y + dy, basePos.z);
+                if (GetBlockType(wp) == BlockType.Air)
+                    SetBlockInChunkOrWorld(wp, BlockType.Log, chunk);
+            }
+            int canopyCenterY = basePos.y + trunkH - 1;
+            // Branches
+            int branchStartY = basePos.y + Mathf.Max(3, trunkH / 2);
+            int primaryTarget = rng.Next(2, maxPrimaryBranches + 1);
+            int primaryPlaced = 0; var usedDirs = new HashSet<Vector2Int>(); int safety = 0;
+            var branchTips = new List<Vector3Int>();
+            while (primaryPlaced < primaryTarget && safety < 40)
+            {
+                safety++;
+                if (rng.NextDouble() > branchSpawnProbability) continue;
+                int by = rng.Next(branchStartY, canopyCenterY);
+                Vector2Int dir2 = RandomHorizontalDir(rng, usedDirs, false);
+                if (dir2 == Vector2Int.zero) continue;
+                usedDirs.Add(dir2);
+                int dynamicCap = Mathf.Min(branchMaxLength, Mathf.Max(2, Mathf.RoundToInt(trunkH * branchLengthFactor)));
+                if (dynamicCap < branchMinLength) dynamicCap = branchMinLength;
+                int length = rng.Next(branchMinLength, dynamicCap + 1);
+                int thickness = branchThickness;
+                float upFactor = (float)rng.NextDouble() < branchUpBias ? 0.6f : 0.15f;
+                BuildBranch(basePos.x, by, basePos.z, dir2, length, thickness, upFactor, chunk, branchTips);
+                primaryPlaced++;
+            }
+            int secondaryTarget = rng.Next(0, maxSecondaryBranches + 1);
+            int secondaryPlaced = 0; safety = 0;
+            while (secondaryPlaced < secondaryTarget && safety < 30)
+            {
+                safety++;
+                if (rng.NextDouble() > secondaryBranchProbability) continue;
+                int by = rng.Next(branchStartY + 1, canopyCenterY + 1);
+                Vector2Int dir2 = RandomHorizontalDir(rng, null, true);
+                if (dir2 == Vector2Int.zero) continue;
+                int secMin = Mathf.Max(2, branchMinLength - 1);
+                int secCapBase = Mathf.Max(3, branchMaxLength - 1);
+                int secDynamicCap = Mathf.Min(secCapBase, Mathf.Max(2, Mathf.RoundToInt(trunkH * branchLengthFactor * 0.75f)));
+                if (secDynamicCap < secMin) secDynamicCap = secMin;
+                int length = rng.Next(secMin, secDynamicCap + 1);
+                int thickness = Mathf.Max(1, branchThickness - 1);
+                float upFactor = (float)rng.NextDouble() < branchUpBias ? 0.7f : 0.25f;
+                BuildBranch(basePos.x, by, basePos.z, dir2, length, thickness, upFactor, chunk, branchTips);
+                secondaryPlaced++;
+            }
+            // Canopy (spherical or organic)
+            int hr = leavesRadius; int downV = leavesDepth; int upV = Mathf.Max(1, Mathf.RoundToInt(leavesDepth * 0.5f));
+            if (autoScaleCanopyWithHeight && trunkH > minTrunkHeight)
+            {
+                int extra = trunkH - minTrunkHeight;
+                float growR = extra * canopyRadiusGrowthPerBlock;
+                float growD = extra * canopyDepthGrowthPerBlock;
+                hr = Mathf.Clamp(Mathf.RoundToInt(leavesRadius + growR), leavesRadius, leavesRadius + 64);
+                downV = Mathf.Clamp(Mathf.RoundToInt(leavesDepth + growD), leavesDepth, leavesDepth + 64);
+                upV = Mathf.Max(1, Mathf.RoundToInt((leavesDepth + growD) * 0.55f));
+            }
+            if (sphericalCanopy)
+            {
+                for (int dy = -downV; dy <= upV; dy++)
+                {
+                    int y = canopyCenterY + dy; if (y < 0 || y >= worldHeight) continue;
+                    for (int dx = -hr; dx <= hr; dx++)
+                    {
+                        for (int dz = -hr; dz <= hr; dz++)
+                        {
+                            var wp = new Vector3Int(basePos.x + dx, y, basePos.z + dz);
+                            if (GetBlockType(wp) != BlockType.Air) continue;
+                            float vx = dx / (float)hr;
+                            float vz = dz / (float)hr;
+                            float vScale = dy >= 0 ? (float)upV : (float)downV;
+                            float vy = dy / Mathf.Max(1f, vScale);
+                            float ellipsoid = vx*vx + vz*vz + vy*vy; // ellipsoid with separate vertical scales
+                            if (ellipsoid <= 1f)
+                            {
+                                if (dx == 0 && dz == 0) continue; // keep trunk column clear
+                                SetBlockInChunkOrWorld(wp, BlockType.Leaves, chunk);
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                for (int dy = -downV; dy <= upV; dy++)
+                {
+                    int y = canopyCenterY + dy; if (y < 0 || y >= worldHeight) continue;
+                    bool belowCenter = dy < 0;
+                    if (belowCenter && canopyDomeBias > 0f)
+                    {
+                        float t = Mathf.InverseLerp(-downV, 0, dy);
+                        float domeMask = Mathf.Lerp(1f - canopyDomeBias, 1f, t);
+                        if (domeMask <= 0.02f) continue;
+                    }
+                    for (int dx = -hr; dx <= hr; dx++)
+                    {
+                        for (int dz = -hr; dz <= hr; dz++)
+                        {
+                            var wp = new Vector3Int(basePos.x + dx, y, basePos.z + dz);
+                            if (GetBlockType(wp) != BlockType.Air) continue;
+                            float nx = dx / (float)hr; float nz = dz / (float)hr;
+                            float vScale = dy >= 0 ? (float)upV : (float)downV;
+                            float ny = dy / Mathf.Max(1f, vScale);
+                            float radial = nx*nx + nz*nz;
+                            float sphereDist = radial + ny*ny;
+                            float cube = Mathf.Max(Mathf.Abs(nx), Mathf.Abs(ny), Mathf.Abs(nz));
+                            float blended = Mathf.Lerp(cube*cube, sphereDist, canopyRoundness);
+                            bool inShape = blended <= 1f;
+                            bool inCore = sphereDist <= canopyCoreFill;
+                            bool inShell = !inCore && inShape && sphereDist >= (1f - canopyShellGuarantee);
+                            if (!inShape && !inCore) continue;
+                            if (!inCore)
+                            {
+                                if (!inShell && leavesSparsity > 0f && belowCenter && rng.NextDouble() < leavesSparsity * 0.25f) continue;
+                                if (canopyTrimUnderBranches > 0f && belowCenter && (Mathf.Abs(dx) + Mathf.Abs(dz)) < leavesRadius * 0.5f && rng.NextDouble() < canopyTrimUnderBranches) continue;
+                                if (dx == 0 && dz == 0 && dy <= 1) continue; // clear trunk column
+                            }
+                            SetBlockInChunkOrWorld(wp, BlockType.Leaves, chunk);
+                        }
+                    }
+                }
+            }
+            // Leaf puffs at branch tips
+            if (!sphericalCanopy && branchTipLeafRadius > 0 && branchTips.Count > 0)
+            {
+                int puffR = branchTipLeafRadius;
+                int puffR2 = puffR * puffR;
+                foreach (var tip in branchTips)
+                {
+                    for (int dx = -puffR; dx <= puffR; dx++)
+                    {
+                        for (int dy = -puffR; dy <= puffR; dy++)
+                        {
+                            for (int dz = -puffR; dz <= puffR; dz++)
+                            {
+                                int dist2 = dx*dx + dy*dy + dz*dz;
+                                if (dist2 > puffR2) continue;
+                                var wp = new Vector3Int(tip.x + dx, tip.y + dy, tip.z + dz);
+                                if (wp.y < 0 || wp.y >= worldHeight) continue;
+                                if (GetBlockType(wp) != BlockType.Air) continue;
+                                SetBlockInChunkOrWorld(wp, BlockType.Leaves, chunk);
+                            }
+                        }
+                    }
+                }
+            }
+            // Prune stray leaves (post-pass)
+            if (pruneLooseLeaves)
+            {
+                int pruneR = hr + 1;
+                int minY = Mathf.Max(0, canopyCenterY - downV - 1);
+                int maxY = Mathf.Min(worldHeight - 1, canopyCenterY + upV + 1);
+                for (int y = minY; y <= maxY; y++)
+                {
+                    for (int dx = -pruneR; dx <= pruneR; dx++)
+                    {
+                        for (int dz = -pruneR; dz <= pruneR; dz++)
+                        {
+                            var wp = new Vector3Int(basePos.x + dx, y, basePos.z + dz);
+                            if (GetBlockType(wp) != BlockType.Leaves) continue;
+                            int neighborLeaves = 0;
+                            // 6-neighborhood
+                            if (GetBlockType(wp + Vector3Int.right) == BlockType.Leaves) neighborLeaves++;
+                            if (GetBlockType(wp + Vector3Int.left) == BlockType.Leaves) neighborLeaves++;
+                            if (GetBlockType(wp + Vector3Int.up) == BlockType.Leaves) neighborLeaves++;
+                            if (GetBlockType(wp + Vector3Int.down) == BlockType.Leaves) neighborLeaves++;
+                            if (GetBlockType(wp + new Vector3Int(0,0,1)) == BlockType.Leaves) neighborLeaves++;
+                            if (GetBlockType(wp + new Vector3Int(0,0,-1)) == BlockType.Leaves) neighborLeaves++;
+                            if (neighborLeaves < leafPruneNeighborThreshold)
+                            {
+                                SetBlockInChunkOrWorld(wp, BlockType.Air, chunk);
+                            }
+                        }
+                    }
+                }
+            }
+            _treeTrunkPositions.Add(basePos);
+            placed++;
+        }
+    }
+
+    private Vector2Int RandomHorizontalDir(System.Random rng, HashSet<Vector2Int> used, bool allowReuse)
+    {
+        Vector2Int[] dirs = { new Vector2Int(1,0), new Vector2Int(-1,0), new Vector2Int(0,1), new Vector2Int(0,-1) };
+        for (int i = 0; i < 8; i++)
+        {
+            var d = dirs[rng.Next(0, dirs.Length)];
+            if (allowReuse || used == null || !used.Contains(d)) return d;
+        }
+        return Vector2Int.zero;
+    }
+
+    private void BuildBranch(int baseX, int baseY, int baseZ, Vector2Int dir2, int length, int thickness, float upBias, WorldGeneration.Chunks.Chunk owningChunk, List<Vector3Int> tips)
+    {
+        int y = baseY; int x = baseX; int z = baseZ;
+        for (int i = 0; i < length; i++)
+        {
+            if (upBias > 0f && UnityEngine.Random.value < upBias) y += 1;
+            x += dir2.x; z += dir2.y;
+            for (int tx = -thickness + 1; tx <= thickness - 1; tx++)
+            {
+                for (int tz = -thickness + 1; tz <= thickness - 1; tz++)
+                {
+                    var wp = new Vector3Int(x + tx, y, z + tz);
+                    if (wp.y < 0 || wp.y >= worldHeight) continue;
+                    if (GetBlockType(wp) == BlockType.Air)
+                        SetBlockInChunkOrWorld(wp, BlockType.Log, owningChunk);
+                }
+            }
+        }
+        if (tips != null)
+        {
+            tips.Add(new Vector3Int(x, y, z));
+        }
+    }
+
+    private void SetBlockInChunkOrWorld(Vector3Int wp, BlockType type, WorldGeneration.Chunks.Chunk owningChunk)
+    {
+        if (useChunkStreaming)
+        {
+            var cc = WorldToChunkCoord(wp);
+            if (_chunks.TryGetValue(cc, out var ch))
+            {
+                var lp = ch.WorldToLocal(wp);
+                ch.SetLocal(lp.x, lp.y, lp.z, type);
+            }
+            else if (owningChunk != null && owningChunk.coord == cc)
+            {
+                var lp = owningChunk.WorldToLocal(wp);
+                owningChunk.SetLocal(lp.x, lp.y, lp.z, type);
+            }
+        }
+        else
+        {
+            if (!IsOutOfBounds(wp))
+            {
+                worldData[wp.x, wp.y, wp.z] = type;
+            }
+        }
     }
 
     private void OnApplicationQuit()
@@ -2019,7 +2579,13 @@ public class WorldGenerator : MonoBehaviour
     {
         if (texture == null) return null;
         if (_plantMaterialCache.TryGetValue(texture, out var mat)) return mat;
-        var shader = Shader.Find("Universal Render Pipeline/Unlit");
+        Shader shader = null;
+        if (enablePlantWind)
+        {
+            shader = Shader.Find("Custom/PlantWind");
+        }
+        if (shader == null)
+            shader = Shader.Find("Universal Render Pipeline/Unlit");
         mat = new Material(shader)
         {
             name = $"Plant_Unlit_{texture.name}",
