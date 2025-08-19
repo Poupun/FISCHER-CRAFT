@@ -1,7 +1,7 @@
 {
   "servers": {
-    "dsfgd-MCP": {
-      "command": "D:/Unity/test/FISCHER-CRAFT/Library/com.ivanmurzak.unity.mcp.server/bin~/Release/net9.0/com.IvanMurzak.Unity.MCP.Server",
+    "Yoyoyoy-MCP": {
+      "command": "C:/Users/User/OneDrive/Documents/DREAMING TALES/Library/com.ivanmurzak.unity.mcp.server/bin~/Release/net9.0/com.IvanMurzak.Unity.MCP.Server",
       "args": [
         "--port=60606",
         "--timeout=10000"

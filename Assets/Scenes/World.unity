@@ -149,16 +149,24 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   worldWidth: 16
-  worldHeight: 16
+  worldHeight: 102
   worldDepth: 16
   generateSuperflat: 1
   flatStoneLayers: 1
   flatDirtLayers: 3
   flatGrassLayers: 1
+  enableHeightVariation: 1
+  worldSeed: 12345
+  heightVariation: 4
+  heightNoiseScale: 48
+  heightNoiseOctaves: 3
+  heightNoisePersistence: 0.5
+  heightNoiseLacunarity: 2
+  heightNoiseBias: 0
   useChunkStreaming: 1
   chunkSizeX: 16
   chunkSizeZ: 16
-  viewDistanceChunks: 4
+  viewDistanceChunks: 8
   player: {fileID: 0}
   maxChunkLoadsPerFrame: 1
   useChunkMeshing: 1
@@ -174,10 +182,64 @@ MonoBehaviour:
   stoneTexture: {fileID: 2800000, guid: 84efa5e9958edd54dba17316450a33d6, type: 3}
   sandTexture: {fileID: 2800000, guid: 00b0e9986577d2c40ab38f6ddf5f069c, type: 3}
   coalTexture: {fileID: 2800000, guid: a8344bd098c463e48abe84da6ea0d3a1, type: 3}
+  logTexture: {fileID: 0}
+  leavesTexture: {fileID: 0}
   plantDatabase: {fileID: 11400000, guid: 44330b0a711c68847915c9e2a961c5ee, type: 2}
   plantDensity: 1
   textureScaleVariation: 1
   textureOffsetVariation: 0
+  enableFaceShading: 1
+  eastWestShade: 0.9
+  northSouthShade: 0.85
+  bottomShade: 0.7
+  variationStrength: 0.08
+  enableTrees: 1
+  treesPerChunk: 3
+  treeSeedOffset: 98765
+  minTrunkHeight: 6
+  maxTrunkHeight: 12
+  leavesRadius: 5
+  leavesDepth: 7
+  autoScaleCanopyWithHeight: 1
+  canopyRadiusGrowthPerBlock: 0.12
+  canopyDepthGrowthPerBlock: 0.1
+  sphericalCanopy: 0
+  pruneLooseLeaves: 1
+  leafPruneNeighborThreshold: 2
+  leavesSparsity: 0.08
+  canopyRoundness: 0.65
+  canopyDomeBias: 0.35
+  maxPrimaryBranches: 5
+  maxSecondaryBranches: 3
+  branchMinLength: 3
+  branchMaxLength: 8
+  branchThickness: 1
+  branchSpawnProbability: 0.55
+  secondaryBranchProbability: 0.35
+  branchUpBias: 0.4
+  canopyTrimUnderBranches: 0.35
+  branchLengthFactor: 0.5
+  canopyCoreFill: 0.4
+  branchTipLeafRadius: 2
+  canopyShellGuarantee: 0.15
+  enforceTreeSpacing: 0
+  treeSpacing: 6
+  constrainTreesInsideChunk: 0
+  enableLeafWind: 1
+  leafWindAmplitude: 0.05
+  leafWindSpeed: 1.2
+  leafWindScale: 0.5
+  leafWindVerticalFactor: 0.3
+  leafWindDirection: {x: 1, y: 0.3}
+  enablePlantWind: 1
+  plantWindAmplitude: 0.07
+  plantWindSpeed: 1.4
+  plantWindScale: 0.8
+  plantWindVerticalFactor: 0.2
+  plantWindVariation: 0.5
+  clearSavedEditsOnReload: 0
+  reseedOnReload: 0
+  triggerReloadInPlay: 0
   tickIntervalSeconds: 0.5
   plantRespawnDelayTicks: 5
   newGrassPlantDelayTicks: 5
