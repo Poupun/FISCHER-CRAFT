@@ -209,16 +209,16 @@ MonoBehaviour:
   leavesSparsity: 0.08
   canopyRoundness: 0.65
   canopyDomeBias: 0.35
-  maxPrimaryBranches: 5
-  maxSecondaryBranches: 3
-  branchMinLength: 3
-  branchMaxLength: 8
+  maxPrimaryBranches: 4
+  maxSecondaryBranches: 2
+  branchMinLength: 2
+  branchMaxLength: 4
   branchThickness: 1
-  branchSpawnProbability: 0.55
+  branchSpawnProbability: 0.359
   secondaryBranchProbability: 0.35
   branchUpBias: 0.4
   canopyTrimUnderBranches: 0.35
-  branchLengthFactor: 0.5
+  branchLengthFactor: 0.386
   canopyCoreFill: 0.4
   branchTipLeafRadius: 2
   canopyShellGuarantee: 0.15

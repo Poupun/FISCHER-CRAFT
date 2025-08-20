@@ -124,6 +124,9 @@ public class WorldGenerator : MonoBehaviour
     [Min(0f)] public float treesPerChunk = 6f;
     [Tooltip("Seed offset for tree placement noise.")]
     public int treeSeedOffset = 98765;
+    [Header("Tree Placement")] 
+    [Tooltip("World grid size for deterministic tree trunk candidates (larger = sparser, more uniform).")]
+    [Range(2, 32)] public int treeGridSize = 6;
     [Header("Tree Height")] 
     [Range(4,64)] public int minTrunkHeight = 6;
     [Range(6,128)] public int maxTrunkHeight = 24;
@@ -171,6 +174,11 @@ public class WorldGenerator : MonoBehaviour
     private readonly HashSet<Vector3Int> _treeTrunkPositions = new HashSet<Vector3Int>();
     [Tooltip("If true, trees are only spawned when their full canopy fits inside the chunk to avoid cut trees at borders.")]
     public bool constrainTreesInsideChunk = false;
+    // Batch flags to avoid per-cell mesh rebuilds during procedural generation
+    private bool _isProceduralBatch = false;
+    private readonly HashSet<Vector2Int> _batchDirtyChunks = new HashSet<Vector2Int>();
+    // Safety net: deferred rebuild queue to handle cross-chunk writes even if batching overlaps
+    private readonly HashSet<Vector2Int> _deferredRebuild = new HashSet<Vector2Int>();
 
     [Header("Leaf Wind Animation")] 
     [Tooltip("Enable subtle shader-based wind sway for leaf blocks (vertex animation).")]
@@ -248,6 +256,34 @@ public class WorldGenerator : MonoBehaviour
         
         LoadTextures();
         CreateBlockMaterials();
+
+        // Ensure a F3 debug overlay exists; avoid compile-time dependency via reflection.
+        try
+        {
+            bool hasOverlay = false;
+            var mbs = FindObjectsByType<MonoBehaviour>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            foreach (var mb in mbs)
+            {
+                if (mb == null) continue;
+                var t = mb.GetType();
+                if (t != null && t.Name == "F3DebugOverlay") { hasOverlay = true; break; }
+            }
+            if (!hasOverlay)
+            {
+                var overlayType = ResolveTypeByName("F3DebugOverlay");
+                if (overlayType != null)
+                {
+                    var go = new GameObject("DebugOverlay");
+                    var comp = go.AddComponent(overlayType);
+                    // Assign fields if they exist
+                    var wf = overlayType.GetField("world"); if (wf != null) wf.SetValue(comp, this);
+                    AutoFindPlayer();
+                    var pf = overlayType.GetField("player"); if (pf != null) pf.SetValue(comp, player);
+                    DontDestroyOnLoad(go);
+                }
+            }
+        }
+        catch { /* ignore overlay setup errors */ }
         if (useChunkStreaming)
         {
             EnsureChunksRoot();
@@ -330,6 +366,21 @@ public class WorldGenerator : MonoBehaviour
                 // Mark as loading before starting coroutine to avoid races
                 _loading.Add(next);
                 StartCoroutine(LoadChunkRoutine(next));
+            }
+            // Process a small number of deferred neighbor mesh rebuilds per frame to avoid spikes
+            int rebuildBudget = 2;
+            if (_deferredRebuild.Count > 0)
+            {
+                var toProcess = new List<Vector2Int>(_deferredRebuild);
+                foreach (var c in toProcess)
+                {
+                    if (rebuildBudget-- <= 0) break;
+                    if (_chunks.ContainsKey(c))
+                    {
+                        RebuildChunkMeshAt(c);
+                        _deferredRebuild.Remove(c);
+                    }
+                }
             }
         }
     }
@@ -797,6 +848,27 @@ public class WorldGenerator : MonoBehaviour
         }
     }
 
+    // --- Public accessors (for debug/overlay tools) ---
+    public Vector2Int GetChunkCoord(Vector3 position) => WorldToChunkCoord(position);
+    public Vector3 GetChunkOrigin(Vector2Int coord) => new Vector3(coord.x * Mathf.Max(1, chunkSizeX), 0f, coord.y * Mathf.Max(1, chunkSizeZ));
+    public int GetChunkSizeX() => Mathf.Max(1, chunkSizeX);
+    public int GetChunkSizeZ() => Mathf.Max(1, chunkSizeZ);
+    public int GetWorldHeight() => Mathf.Max(1, worldHeight);
+    public List<Vector2Int> SnapshotLoadedChunkCoords()
+    {
+        // Return a snapshot copy to avoid collection modified exceptions during iteration
+        return new List<Vector2Int>(_chunks.Keys);
+    }
+    public string GetBiomeAt(Vector3 worldPos)
+    {
+        // Placeholder until multiple biomes are added. Current terrain simulates plains.
+        if (generateSuperflat)
+        {
+            return enableHeightVariation ? "Plains" : "Superflat";
+        }
+        return "Overworld";
+    }
+
     private void AutoFindPlayer()
     {
         if (player != null) return;
@@ -931,7 +1003,10 @@ public class WorldGenerator : MonoBehaviour
         // Trees (before meshing so logs/leaves are part of mesh). Only procedural if not already edited at those cells.
         if (enableTrees)
         {
-            GenerateTreesInChunk(chunk);
+            _isProceduralBatch = true;
+            _batchDirtyChunks.Clear();
+            yield return GenerateTreesInChunkRoutine(chunk);
+            _isProceduralBatch = false;
         }
 
     // Register chunk early so GetBlockType works during spawning logic
@@ -956,6 +1031,28 @@ public class WorldGenerator : MonoBehaviour
 
             // Spawn plants in batched renderer for very lightweight loads
             BuildChunkPlants(chunk, usefulY);
+
+            // After meshing this chunk, rebuild any neighbor chunks we touched during batched generation
+            if (_batchDirtyChunks.Count > 0)
+            {
+                foreach (var dc in _batchDirtyChunks)
+                {
+                    if (dc != coord)
+                    {
+                        // Defer to frame budget to reduce spikes
+                        _deferredRebuild.Add(dc);
+                    }
+                }
+                _batchDirtyChunks.Clear();
+            }
+
+            // Also request immediate neighbors to rebuild to refresh border culling (cheap, deferred)
+            Vector2Int[] ortho = { new Vector2Int(1,0), new Vector2Int(-1,0), new Vector2Int(0,1), new Vector2Int(0,-1) };
+            foreach (var o in ortho)
+            {
+                var nc = new Vector2Int(coord.x + o.x, coord.y + o.y);
+                if (_chunks.ContainsKey(nc)) _deferredRebuild.Add(nc);
+            }
         }
         else
         {
@@ -1354,6 +1451,33 @@ public class WorldGenerator : MonoBehaviour
             return worldData[position.x, position.y, position.z];
         }
     }
+
+    // Chunk-aware peek used during generation within an owning chunk.
+    // Falls back to loaded chunks or world data; never forces a load.
+    private BlockType PeekBlockForGeneration(Vector3Int position, WorldGeneration.Chunks.Chunk owningChunk)
+    {
+        if (useChunkStreaming)
+        {
+            if (IsOutOfBounds(position)) return BlockType.Air;
+            var cc = WorldToChunkCoord(position);
+            if (owningChunk != null && owningChunk.coord == cc)
+            {
+                var lp = owningChunk.WorldToLocal(position);
+                return owningChunk.GetLocal(lp.x, lp.y, lp.z);
+            }
+            if (_chunks.TryGetValue(cc, out var ch))
+            {
+                var lp = ch.WorldToLocal(position);
+                return ch.GetLocal(lp.x, lp.y, lp.z);
+            }
+            return BlockType.Air;
+        }
+        else
+        {
+            if (IsOutOfBounds(position)) return BlockType.Air;
+            return worldData[position.x, position.y, position.z];
+        }
+    }
     
     public bool PlaceBlock(Vector3Int position, BlockType blockType)
     {
@@ -1553,179 +1677,216 @@ public class WorldGenerator : MonoBehaviour
     }
 
     // ----------------- TREE GENERATION (Hytale-style) -----------------
-    private void GenerateTreesInChunk(WorldGeneration.Chunks.Chunk chunk)
+    private IEnumerator GenerateTreesInChunkRoutine(WorldGeneration.Chunks.Chunk chunk)
     {
-        if (!enableTrees) return;
+        if (!enableTrees) yield break;
 
-        // Density influenced softly by base terrain noise to avoid perfect grids of trees
-        int seed = worldSeed ^ treeSeedOffset ^ (chunk.coord.x * 734287 + chunk.coord.y * 912931);
-        System.Random rng = new System.Random(seed);
-    // Use chunk center for density noise to avoid overly symmetric patterns across chunks
-    int noiseX = chunk.coord.x * chunk.sizeX + chunk.sizeX / 2;
-    int noiseZ = chunk.coord.y * chunk.sizeZ + chunk.sizeZ / 2;
-    float baseNoise = EvaluateHeightNoise(noiseX, noiseZ); // [-1,1]
-    float densityScale = Mathf.Clamp01(0.6f + 0.4f * (baseNoise * 0.5f + 0.5f));
-    // Randomize target count per chunk to avoid repeating patterns: floor(lambda) + Bernoulli(frac)
-    float lambda = Mathf.Max(0f, treesPerChunk * densityScale);
-    int target = Mathf.FloorToInt(lambda);
-    double frac = lambda - target;
-    if (rng.NextDouble() < frac) target++;
-        int attempts = target * 5 + 20;
-        int placed = 0;
+        // Deterministic world-space sampling across chunk borders.
+        int grid = Mathf.Max(2, treeGridSize);
 
-    // Margin when constraining trees inside the chunk so branches/bushes don't cross borders.
-    // Previously fixed at 8 (half of 16) which forced center-of-chunk placements (grid). Now compute from branch reach.
-    int maxHorizLen = 4; // from horizLen = rng.Next(2, 5)
-    int desiredMargin = maxHorizLen + Mathf.Max(1, branchTipLeafRadius) + 1; // horiz reach + bush radius + pad
-    int halfDimMinusOne = Mathf.Max(1, Mathf.Min(chunk.sizeX, chunk.sizeZ) / 2 - 1);
-    int safetyMargin = constrainTreesInsideChunk ? Mathf.Clamp(desiredMargin, 1, halfDimMinusOne) : 0;
+        // Conservative horizontal reach to include neighbors when checking constrain option
+        int reach = Mathf.Max(8, branchTipLeafRadius + 6);
 
-        for (int a = 0; a < attempts && placed < target; a++)
+        // Chunk world bounds
+        int wx0 = chunk.coord.x * chunk.sizeX;
+        int wz0 = chunk.coord.y * chunk.sizeZ;
+        int wx1 = wx0 + chunk.sizeX - 1;
+        int wz1 = wz0 + chunk.sizeZ - 1;
+
+        // Expanded area for candidate trunks (only used to decide candidates; we still emit blocks only within this chunk)
+        int minX = wx0 - reach;
+        int maxX = wx1 + reach;
+        int minZ = wz0 - reach;
+        int maxZ = wz1 + reach;
+
+        // Iterate grid cells deterministically
+    int workCounter = 0;
+    for (int gx = FloorDiv(minX, grid) * grid; gx <= maxX; gx += grid)
         {
-            // Pick a random local XZ within safe margins; ensure non-degenerate ranges
-            int minLX = safetyMargin;
-            int maxLXExcl = chunk.sizeX - safetyMargin;
-            if (maxLXExcl <= minLX)
+            for (int gz = FloorDiv(minZ, grid) * grid; gz <= maxZ; gz += grid)
             {
-                minLX = 1; maxLXExcl = Mathf.Max(2, chunk.sizeX - 1);
-            }
-            int lx = rng.Next(minLX, maxLXExcl);
+        // Periodically yield to keep frame time responsive
+        if ((workCounter++ & 31) == 0) yield return null;
+                // Density modulation using terrain noise at cell center
+                int cx = gx + grid / 2;
+                int cz = gz + grid / 2;
+                float baseNoise = EvaluateHeightNoise(cx, cz); // [-1,1]
+                float densityScale = Mathf.Clamp01(0.6f + 0.4f * (baseNoise * 0.5f + 0.5f));
+                // Expected trees per block
+                float densityPerBlock = (treesPerChunk <= 0f || chunk.sizeX <= 0 || chunk.sizeZ <= 0)
+                    ? 0f
+                    : treesPerChunk / (float)(chunk.sizeX * chunk.sizeZ);
+                float pCell = Mathf.Clamp01(densityPerBlock * (grid * grid) * densityScale);
 
-            int minLZ = safetyMargin;
-            int maxLZExcl = chunk.sizeZ - safetyMargin;
-            if (maxLZExcl <= minLZ)
-            {
-                minLZ = 1; maxLZExcl = Mathf.Max(2, chunk.sizeZ - 1);
-            }
-            int lz = rng.Next(minLZ, maxLZExcl);
+                // Deterministic PRNG per cell
+                int cellSeed = worldSeed ^ treeSeedOffset ^ (gx * 73856093) ^ (gz * 19349663);
+                System.Random cellRng = new System.Random(cellSeed);
+                if (cellRng.NextDouble() > pCell) continue; // no tree in this cell
 
-            // Find the ground (grass with air above)
-            int groundY = -1;
-            for (int ly = Mathf.Min(chunk.sizeY - 2, worldHeight - 2); ly >= 1; ly--)
-            {
-                if (chunk.GetLocal(lx, ly, lz) == BlockType.Grass && chunk.GetLocal(lx, ly + 1, lz) == BlockType.Air)
-                { groundY = ly; break; }
-            }
-            if (groundY < 0) continue;
+                // Offset trunk inside cell for natural distribution
+                int offX = (int)(cellRng.NextDouble() * grid);
+                int offZ = (int)(cellRng.NextDouble() * grid);
+                int tx = gx + offX;
+                int tz = gz + offZ;
 
-            var basePos = chunk.LocalToWorld(new Vector3Int(lx, groundY + 1, lz));
-
-            // Optional spacing vs previous trunks
-            if (enforceTreeSpacing)
-            {
-                bool tooClose = false;
-                foreach (var p in _treeTrunkPositions)
+                // If constraining inside chunk, skip trunks that can't fit (approx)
+        if (constrainTreesInsideChunk)
                 {
-                    int manhattan = Mathf.Abs(p.x - basePos.x) + Mathf.Abs(p.z - basePos.z);
-                    if (manhattan < treeSpacing) { tooClose = true; break; }
+                    if (tx < wx0 + reach || tx > wx1 - reach || tz < wz0 + reach || tz > wz1 - reach)
+            continue;
                 }
-                if (tooClose) continue;
-            }
 
-            // Trunk height: use inspector min/max, allow a shorter minimum via minTrunkHeight
-            int minH = Mathf.Clamp(minTrunkHeight, 4, 128);
-            int maxH = Mathf.Clamp(maxTrunkHeight, minH + 1, 256);
-            int trunkH = rng.Next(minH, maxH + 1);
-            if (basePos.y + trunkH + 6 >= worldHeight) // keep some headroom for branches/bushes
-                trunkH = Mathf.Max(minH, worldHeight - basePos.y - 6);
-            if (trunkH < minH) continue;
-
-            // Build straight trunk
-            for (int dy = 0; dy < trunkH; dy++)
-            {
-                var wp = new Vector3Int(basePos.x, basePos.y + dy, basePos.z);
-                if (GetBlockType(wp) == BlockType.Air)
-                    SetBlockInChunkOrWorld(wp, BlockType.Log, chunk);
-            }
-
-            int topY = basePos.y + trunkH - 1;
-
-            // Small crown bush at trunk top (original look)
-            BuildBushAt(new Vector3Int(basePos.x, topY, basePos.z), 2, chunk);
-
-            // Slightly fewer branches, still distributed along the trunk
-            int branchCount = rng.Next(3, 7);
-            var tips = new List<Vector3Int>();
-
-            for (int b = 0; b < branchCount; b++)
-            {
-                // Choose a start height anywhere along most of the trunk
-                int minBy = basePos.y + 2;
-                int maxBy = Mathf.Max(minBy, topY - 2);
-                int by = rng.Next(minBy, maxBy + 1);
-
-                // Pick one of 4 horizontal directions (cardinal only; no diagonals to avoid 2-axis zigzag)
-                Vector2Int[] dirs = { new Vector2Int(1,0), new Vector2Int(-1,0), new Vector2Int(0,1), new Vector2Int(0,-1) };
-                Vector2Int dir2 = dirs[rng.Next(0, dirs.Length)];
-
-                // Small branch: short horizontal run, then abrupt vertical rise only (no drift)
-                int horizLen = rng.Next(2, 5);   // 2..4
-                int vertLen  = rng.Next(3, 7);   // 3..6
-
-                int x = basePos.x; int y = by; int z = basePos.z;
-                var start = new Vector3Int(x, y, z);
-                Vector3Int lastPos = start;
-                bool aborted = false;
-
-                // Horizontal segment
-                for (int i = 0; i < horizLen; i++)
+                // Find ground (grass with air above) at trunk position
+                int topY = -1;
+                int maxScanY = Mathf.Min(chunk.sizeY - 2, worldHeight - 2);
+                for (int y = maxScanY; y >= 1; y--)
                 {
-                    x += dir2.x; z += dir2.y;
-                    var wp = new Vector3Int(x, y, z);
-                    if (wp.y < 0 || wp.y >= worldHeight) { aborted = true; break; }
-                    if (constrainTreesInsideChunk)
+                    if (PeekBlockForGeneration(new Vector3Int(tx, y, tz), chunk) == BlockType.Grass &&
+                        PeekBlockForGeneration(new Vector3Int(tx, y + 1, tz), chunk) == BlockType.Air)
+                    { topY = y; break; }
+                }
+                if (topY < 0) continue;
+                var basePos = new Vector3Int(tx, topY + 1, tz);
+
+                // Optional spacing vs previous trunks (global set for play session)
+                if (enforceTreeSpacing)
+                {
+                    bool tooClose = false;
+                    foreach (var p in _treeTrunkPositions)
                     {
-                        var lc = chunk.WorldToLocal(wp);
-                        if (lc.x < 0 || lc.x >= chunk.sizeX || lc.z < 0 || lc.z >= chunk.sizeZ) { aborted = true; break; }
+                        int manhattan = Mathf.Abs(p.x - basePos.x) + Mathf.Abs(p.z - basePos.z);
+                        if (manhattan < treeSpacing) { tooClose = true; break; }
                     }
-                    if (GetBlockType(wp) == BlockType.Air)
-                        SetBlockInChunkOrWorld(wp, BlockType.Log, chunk);
-                    lastPos = wp;
+                    if (tooClose) continue;
                 }
 
-                // If aborted at boundary, still place a bush at the last valid position
-                if (aborted)
+                // Per-tree RNG seeded by trunk position
+                int treeSeed = worldSeed ^ treeSeedOffset ^ (tx * 951631) ^ (tz * 105467);
+                System.Random rng = new System.Random(treeSeed);
+
+                // Trunk height
+                int minH = Mathf.Clamp(minTrunkHeight, 4, 128);
+                int maxH = Mathf.Clamp(maxTrunkHeight, minH + 1, 256);
+                int trunkH = rng.Next(minH, maxH + 1);
+                if (basePos.y + trunkH + 6 >= worldHeight)
+                    trunkH = Mathf.Max(minH, worldHeight - basePos.y - 6);
+                if (trunkH < minH) continue;
+
+                // Build trunk (emit only cells inside current chunk bounds)
+                for (int dy = 0; dy < trunkH; dy++)
                 {
+                    var wp = new Vector3Int(basePos.x, basePos.y + dy, basePos.z);
+                    if (!chunk.ContainsWorldCell(wp)) continue;
+                    if (PeekBlockForGeneration(wp, chunk) == BlockType.Air)
+                        SetBlockInChunkOrWorld(wp, BlockType.Log, chunk);
+                    if ((workCounter++ & 63) == 0) yield return null;
+                }
+
+                int trunkTopY = basePos.y + trunkH - 1;
+                // Crown bush (allow crossing chunk edges unless explicitly constrained)
+                BuildBushAt(new Vector3Int(basePos.x, trunkTopY, basePos.z), 2, chunk);
+                if ((workCounter++ & 63) == 0) yield return null;
+
+                // Branches
+                int branchCount = rng.Next(2, 5);
+                var usedDirs = new HashSet<Vector2Int>();
+                var tips = new List<Vector3Int>();
+
+                for (int b = 0; b < branchCount; b++)
+                {
+                    int minBy = basePos.y + Mathf.Max(2, Mathf.RoundToInt(trunkH * 0.6f));
+                    int maxBy = Mathf.Max(minBy, trunkTopY - 2);
+                    int by = rng.Next(minBy, maxBy + 1);
+                    Vector2Int dir2 = RandomHorizontalDir(rng, usedDirs, allowReuse: false);
+                    if (dir2 == Vector2Int.zero) continue;
+                    usedDirs.Add(dir2);
+
+                    int horizLen = rng.Next(2, 5);
+                    int vertLen = rng.Next(3, 7);
+                    int desiredTipMinY = trunkTopY - 1;
+                    if (by + vertLen < desiredTipMinY) vertLen += (desiredTipMinY - (by + vertLen));
+
+                    int x = basePos.x; int y = by; int z = basePos.z;
+                    Vector3Int lastPos = new Vector3Int(x, y, z);
+                    bool aborted = false;
+
+                    // Horizontal
+                    for (int i = 0; i < horizLen; i++)
+                    {
+                        x += dir2.x; z += dir2.y;
+                        var wp = new Vector3Int(x, y, z);
+                        if (wp.y < 0 || wp.y >= worldHeight) { aborted = true; break; }
+                        if (PeekBlockForGeneration(wp, chunk) != BlockType.Air) { aborted = true; break; }
+                        SetBlockInChunkOrWorld(wp, BlockType.Log, chunk);
+                        lastPos = wp;
+                        if ((workCounter++ & 63) == 0) yield return null;
+                    }
+                    if (aborted)
+                    {
+                        tips.Add(lastPos);
+                        continue;
+                    }
+
+                    // Vertical
+                    for (int j = 0; j < vertLen; j++)
+                    {
+                        y += 1;
+                        var wp = new Vector3Int(x, y, z);
+                        if (wp.y < 0 || wp.y >= worldHeight) { aborted = true; break; }
+                        if (PeekBlockForGeneration(wp, chunk) != BlockType.Air) { aborted = true; break; }
+                        SetBlockInChunkOrWorld(wp, BlockType.Log, chunk);
+                        lastPos = wp;
+                        if ((workCounter++ & 63) == 0) yield return null;
+                    }
                     tips.Add(lastPos);
-                    continue;
                 }
 
-                // Sharp elbow upwards only (strict 90°): no horizontal drift after elbow
-                for (int j = 0; j < vertLen; j++)
+                // Tip bushes (allow crossing chunk edges unless explicitly constrained)
+                foreach (var tip in tips)
                 {
-                    y += 1; // strictly vertical
-                    var wp = new Vector3Int(x, y, z); // keep x,z constant after elbow
-                    if (wp.y < 0 || wp.y >= worldHeight) { aborted = true; break; }
-                    if (constrainTreesInsideChunk)
-                    {
-                        var lc = chunk.WorldToLocal(wp);
-                        if (lc.x < 0 || lc.x >= chunk.sizeX || lc.z < 0 || lc.z >= chunk.sizeZ) { aborted = true; break; }
-                    }
-                    if (GetBlockType(wp) == BlockType.Air)
-                        SetBlockInChunkOrWorld(wp, BlockType.Log, chunk);
-                    lastPos = wp;
+                    BuildBushAt(tip, rng.Next(2, 3), chunk);
+                    if ((workCounter++ & 63) == 0) yield return null;
                 }
 
-                // Always register a tip for a bush (even if vertical hit ceiling previously we already handled)
-                var tip = lastPos;
-                tips.Add(tip);
+                // Track trunk positions to optionally enforce spacing against later chunks
+                _treeTrunkPositions.Add(basePos);
             }
+        }
+        yield break;
+    }
 
-            // Bushes at branch tips for the Hytale look
-            foreach (var tip in tips)
+    private int FloorDiv(int a, int b)
+    {
+        int q = a / b;
+        if ((a ^ b) < 0 && a % b != 0) q--;
+        return q;
+    }
+
+    private void BuildBushClampedToChunk(Vector3Int center, int radius, WorldGeneration.Chunks.Chunk owningChunk)
+    {
+        int r2 = radius * radius;
+        for (int dx = -radius; dx <= radius; dx++)
+        {
+            for (int dy = -radius; dy <= radius; dy++)
             {
-                BuildBushAt(tip, rng.Next(2, 3), chunk);
+                for (int dz = -radius; dz <= radius; dz++)
+                {
+                    int d2 = dx*dx + dy*dy + dz*dz;
+                    if (d2 > r2) continue;
+                    var wp = new Vector3Int(center.x + dx, center.y + dy, center.z + dz);
+                    if (wp.y < 0 || wp.y >= worldHeight) continue;
+                    if (!owningChunk.ContainsWorldCell(wp)) continue; // clamp to this chunk only
+                    if (PeekBlockForGeneration(wp, owningChunk) == BlockType.Air)
+                        SetBlockInChunkOrWorld(wp, BlockType.Leaves, owningChunk);
+                }
             }
-
-            _treeTrunkPositions.Add(basePos);
-            placed++;
         }
     }
 
     private void TrySetLog(Vector3Int p, WorldGeneration.Chunks.Chunk owningChunk)
     {
         if (p.y < 0 || p.y >= worldHeight) return;
-        if (GetBlockType(p) == BlockType.Air)
+        if (PeekBlockForGeneration(p, owningChunk) == BlockType.Air)
             SetBlockInChunkOrWorld(p, BlockType.Log, owningChunk);
     }
 
@@ -1747,7 +1908,7 @@ public class WorldGenerator : MonoBehaviour
                         var lc = owningChunk.WorldToLocal(wp);
                         if (lc.x < 0 || lc.x >= owningChunk.sizeX || lc.z < 0 || lc.z >= owningChunk.sizeZ) continue;
                     }
-                    if (GetBlockType(wp) == BlockType.Air)
+                    if (PeekBlockForGeneration(wp, owningChunk) == BlockType.Air)
                         SetBlockInChunkOrWorld(wp, BlockType.Leaves, owningChunk);
                 }
             }
@@ -1782,7 +1943,7 @@ public class WorldGenerator : MonoBehaviour
                 {
                     var wp = new Vector3Int(x + tx, y, z + tz);
                     if (wp.y < 0 || wp.y >= worldHeight) continue;
-                    if (GetBlockType(wp) == BlockType.Air)
+                    if (PeekBlockForGeneration(wp, owningChunk) == BlockType.Air)
                         SetBlockInChunkOrWorld(wp, BlockType.Log, owningChunk);
                 }
             }
@@ -1802,11 +1963,32 @@ public class WorldGenerator : MonoBehaviour
             {
                 var lp = ch.WorldToLocal(wp);
                 ch.SetLocal(lp.x, lp.y, lp.z, type);
+                // If we modified a different loaded chunk during generation, delay rebuild in batch mode
+                if (useChunkMeshing && (owningChunk == null || ch.coord != owningChunk.coord))
+                {
+                    if (_isProceduralBatch)
+                        _batchDirtyChunks.Add(cc);
+                    else
+                    {
+                        // Queue for deferred rebuild to avoid immediate spikes
+                        _deferredRebuild.Add(cc);
+                    }
+                }
             }
             else if (owningChunk != null && owningChunk.coord == cc)
             {
                 var lp = owningChunk.WorldToLocal(wp);
                 owningChunk.SetLocal(lp.x, lp.y, lp.z, type);
+            }
+            else
+            {
+                // Target chunk not loaded yet: record as a pending edit so it's applied on load
+                if (!_chunkEdits.TryGetValue(cc, out var map))
+                {
+                    map = new Dictionary<Vector3Int, BlockType>();
+                    _chunkEdits[cc] = map;
+                }
+                map[wp] = type;
             }
         }
         else

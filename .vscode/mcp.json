@@ -1,10 +1,10 @@
 {
   "servers": {
-    "Yoyoyoy-MCP": {
+    "Unity-MCP": {
       "command": "C:/Users/User/OneDrive/Documents/DREAMING TALES/Library/com.ivanmurzak.unity.mcp.server/bin~/Release/net9.0/com.IvanMurzak.Unity.MCP.Server",
       "args": [
         "--port=60606",
-        "--timeout=10000"
+        "--timeout=10002"
       ]
     }
   }
