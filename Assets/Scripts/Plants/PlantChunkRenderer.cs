@@ -116,7 +116,7 @@ public class PlantChunkRenderer : MonoBehaviour
                 var mr = child.AddComponent<MeshRenderer>();
                 mr.sharedMaterial = mat;
                 mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                mr.receiveShadows = false;
+                mr.receiveShadows = true;
 
                 var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
                 mesh.SetVertices(v);
@@ -159,8 +159,11 @@ public class PlantChunkRenderer : MonoBehaviour
                 }
                 mesh.SetColors(cList);
                 mesh.SetTriangles(t, 0);
+                // Provide explicit normals pointing up for consistent lighting on crossed quads
+                var norms = new List<Vector3>(v.Count);
+                for (int i = 0; i < v.Count; i++) norms.Add(Vector3.up);
+                mesh.SetNormals(norms);
                 mesh.RecalculateBounds();
-                mesh.RecalculateNormals();
                 mf.sharedMesh = mesh;
 
                 _meshes[mat] = mesh;

@@ -86,6 +86,8 @@ public class WorldGenerator : MonoBehaviour
     public ScriptableObject plantDatabase;
     [Tooltip("Expected plant instances per exposed grass tile (can be fractional).")]
     [Range(0f, 3f)] public float plantDensity = 0.7f;
+    // Track to detect runtime changes and rebuild plants live
+    private float _lastPlantDensity = -12345.678f;
 
     [Header("Anti-Tiling Settings")]
     [Range(0.8f, 1.2f)]
@@ -116,6 +118,17 @@ public class WorldGenerator : MonoBehaviour
     private TextureVariationManager textureManager;
     // Cache for plant materials by texture so we don't create per-instance materials
     private readonly Dictionary<Texture2D, Material> _plantMaterialCache = new Dictionary<Texture2D, Material>();
+    // Runtime plant defs discovered from textures (merged with PlantDatabase at runtime)
+    private readonly List<object> _extraPlantDefs = new List<object>();
+    // Minimal runtime plant def type to work with reflection helpers
+    private class RuntimePlantDef
+    {
+        public Texture2D texture;
+        public Vector2 heightRange = new Vector2(0.6f, 1.2f);
+        public float width = 0.9f;
+        public float yOffset = 0.02f;
+        public float weight = 1f;
+    }
 
     [Header("Trees")] 
     [Tooltip("Enable procedural tree generation (advanced)." )]
@@ -190,6 +203,27 @@ public class WorldGenerator : MonoBehaviour
     [Tooltip("Wind direction on XZ plane.")]
     public Vector2 leafWindDirection = new Vector2(1f, 0.3f);
 
+    [Header("Leaves Rendering")]
+    [Tooltip("Treat leaves as opaque for face culling to remove internal faces and stop flicker.")]
+    public bool leavesOccludeFaces = false;
+    [Tooltip("Alpha cutoff for leaf textures (higher = more holes).")]
+    [Range(0.1f, 0.8f)] public float leavesCutoff = 0.35f;
+    [Tooltip("If off, leaves will not receive shadows (often makes canopies less dark).")]
+    public bool leavesReceiveShadows = true;
+    [Tooltip("Filter mode for leaves texture (Point keeps crisp pixels; Bilinear smooths edges).")]
+    public FilterMode leavesFilterMode = FilterMode.Point;
+    [Tooltip("Mip map bias for leaves (-1 sharper / +1 blurrier if mipmaps exist). 0 keeps import setting.")]
+    [Range(-1f,1f)] public float leavesMipMapBias = 0f;
+
+    [Header("Lighting Balancer")]
+    [Tooltip("Adds a subtle emission to blocks/leaves to prevent fully black faces in deep shadow.")]
+    public bool enableAmbientFill = true;
+    [Range(0f, 0.2f)] public float ambientFill = 0.06f;
+    private bool _lastEnableAmbientFill = false;
+    private float _lastAmbientFill = -1f;
+    // Track leaf wind toggle to live-swap shaders safely
+    private bool _lastEnableLeafWindToggle = false;
+
     // Small integer hash for variation (kept here for chunk mesher)
     public static float Hash(int x, int y, int z)
     {
@@ -213,6 +247,18 @@ public class WorldGenerator : MonoBehaviour
     [Range(0f,1f)] public float plantWindVerticalFactor = 0.2f;
     [Tooltip("Per-plant randomization factor (0 = uniform motion).")]
     [Range(0f,1f)] public float plantWindVariation = 0.5f;
+
+    [Header("Plant Controls")]
+    [Tooltip("Weight multipliers for plant selection by texture name.")]
+    [Range(0f,5f)] public float plantWeightFern = 1.0f;
+    [Range(0f,5f)] public float plantWeightPlant = 1.0f;
+    [Range(0f,5f)] public float plantWeightGrass = 1.5f;
+    [Tooltip("Uniform size multipliers applied to height and width per plant kind.")]
+    [Range(0.5f,2f)] public float plantSizeFern = 1.0f;
+    [Range(0.5f,2f)] public float plantSizePlant = 1.0f;
+    [Range(0.5f,2f)] public float plantSizeGrass = 1.0f;
+    private float _lastPlantWeightFern = -1f, _lastPlantWeightPlant = -1f, _lastPlantWeightGrass = -1f;
+    private float _lastPlantSizeFern = -1f, _lastPlantSizePlant = -1f, _lastPlantSizeGrass = -1f;
 
     [Header("Debug / Reload")] 
     [Tooltip("If true, a reload will discard persisted chunk edits (fresh world)." )]
@@ -241,6 +287,9 @@ public class WorldGenerator : MonoBehaviour
     private readonly Dictionary<Vector2Int, Dictionary<Vector3Int, BlockType>> _chunkEdits = new Dictionary<Vector2Int, Dictionary<Vector3Int, BlockType>>();
     // Meshing mode: per-chunk set of plant cells removed by the player (world-space plant cell = above grass)
     private readonly Dictionary<Vector2Int, HashSet<Vector3Int>> _removedBatchedPlants = new Dictionary<Vector2Int, HashSet<Vector3Int>>();
+    // One-time logs to avoid spamming when falling back from custom shaders
+    private bool _loggedPlantWindFallback = false;
+    private bool _loggedLeavesWindFallback = false;
 
     // Save DTOs (local to avoid cross-file dependency)
     [System.Serializable]
@@ -302,6 +351,28 @@ public class WorldGenerator : MonoBehaviour
     
     void Update()
     {
+        // Live-apply ambient fill tuning
+        if (blockMaterials != null && (enableAmbientFill != _lastEnableAmbientFill || Mathf.Abs(ambientFill - _lastAmbientFill) > 0.0001f))
+        {
+            _lastEnableAmbientFill = enableAmbientFill;
+            _lastAmbientFill = ambientFill;
+            var ec = new Color(ambientFill, ambientFill, ambientFill, 1f);
+            for (int i = 0; i < blockMaterials.Length; i++)
+            {
+                var m = blockMaterials[i];
+                if (m == null) continue;
+                if (enableAmbientFill)
+                {
+                    m.SetColor("_EmissionColor", ec);
+                    m.EnableKeyword("_EMISSION");
+                }
+                else
+                {
+                    m.SetColor("_EmissionColor", Color.black);
+                    m.DisableKeyword("_EMISSION");
+                }
+            }
+        }
         // Update leaf wind material params each frame (cheap, single material)
         if (enableLeafWind && blockMaterials != null && (int)BlockType.Leaves < blockMaterials.Length)
         {
@@ -316,6 +387,40 @@ public class WorldGenerator : MonoBehaviour
                     lm.SetFloat("_WindVertical", leafWindVerticalFactor);
                     Vector2 dir = leafWindDirection.sqrMagnitude < 0.0001f ? new Vector2(1,0) : leafWindDirection.normalized;
                     lm.SetVector("_WindDir", new Vector4(dir.x, dir.y, 0, 0));
+                }
+            }
+        }
+        // Live leaf wind shader swap to avoid pink and allow toggling at runtime
+        if (blockMaterials != null && (enableLeafWind != _lastEnableLeafWindToggle))
+        {
+            _lastEnableLeafWindToggle = enableLeafWind;
+            if ((int)BlockType.Leaves < blockMaterials.Length)
+            {
+                var lm = blockMaterials[(int)BlockType.Leaves];
+                if (lm != null)
+                {
+                    if (enableLeafWind)
+                    {
+                        var ws = Shader.Find("Custom/LeavesWind");
+                        if (ws != null && ws.isSupported && IsShaderURPCompatible(ws))
+                        {
+                            lm.shader = ws;
+                        }
+                        else if (!_loggedLeavesWindFallback)
+                        {
+                            _loggedLeavesWindFallback = true;
+                            Debug.LogWarning("Leaves wind shader not available/compatible; keeping URP Simple Lit to avoid pink.");
+                        }
+                    }
+                    else
+                    {
+                        var simpleLit = Shader.Find("Universal Render Pipeline/Simple Lit");
+                        if (simpleLit != null)
+                        {
+                            lm.shader = simpleLit;
+                        }
+                    }
+                    ApplyLeafMaterialSettings(lm);
                 }
             }
         }
@@ -356,6 +461,68 @@ public class WorldGenerator : MonoBehaviour
         if (useChunkStreaming)
         {
             UpdateStreaming();
+            // Live plant density adjustment: rebuild plant meshes if value changed
+            if (useChunkMeshing && Mathf.Abs(plantDensity - _lastPlantDensity) > 0.0001f)
+            {
+                _lastPlantDensity = plantDensity;
+                RebuildPlantsForAllLoadedChunks();
+            }
+            // Live plant wind shader swap
+            if (_plantMaterialCache != null)
+            {
+                foreach (var kv in new List<Texture2D>(_plantMaterialCache.Keys))
+                {
+                    var mat = _plantMaterialCache[kv];
+                    if (mat == null) { _plantMaterialCache.Remove(kv); continue; }
+                    bool hasWind = mat.shader != null && mat.shader.name == "Custom/PlantWind";
+                    if (enablePlantWind && !hasWind)
+                    {
+                        var ws = Shader.Find("Custom/PlantWind");
+                        if (ws != null && ws.isSupported && IsShaderURPCompatible(ws))
+                        {
+                            mat.shader = ws;
+                            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+                            if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 1f);
+                            if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", 0.5f);
+                            if (mat.HasProperty("_AlphaToMask")) mat.SetFloat("_AlphaToMask", 1f);
+                        }
+                        else if (!_loggedPlantWindFallback)
+                        {
+                            _loggedPlantWindFallback = true;
+                            Debug.LogWarning("Plant wind shader not available/compatible; using URP Simple Lit instead to avoid pink.");
+                        }
+                    }
+                    else if (!enablePlantWind && hasWind)
+                    {
+                        var sl = Shader.Find("Universal Render Pipeline/Simple Lit");
+                        if (sl != null)
+                        {
+                            mat.shader = sl;
+                            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+                            if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 1f);
+                            if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", 0.5f);
+                            if (mat.HasProperty("_AlphaToMask")) mat.SetFloat("_AlphaToMask", 1f);
+                        }
+                    }
+                }
+            }
+            // Live plant weights/sizes update
+            if (useChunkMeshing && (
+                Mathf.Abs(plantWeightFern - _lastPlantWeightFern) > 0.0001f ||
+                Mathf.Abs(plantWeightPlant - _lastPlantWeightPlant) > 0.0001f ||
+                Mathf.Abs(plantWeightGrass - _lastPlantWeightGrass) > 0.0001f ||
+                Mathf.Abs(plantSizeFern - _lastPlantSizeFern) > 0.0001f ||
+                Mathf.Abs(plantSizePlant - _lastPlantSizePlant) > 0.0001f ||
+                Mathf.Abs(plantSizeGrass - _lastPlantSizeGrass) > 0.0001f))
+            {
+                _lastPlantWeightFern = plantWeightFern;
+                _lastPlantWeightPlant = plantWeightPlant;
+                _lastPlantWeightGrass = plantWeightGrass;
+                _lastPlantSizeFern = plantSizeFern;
+                _lastPlantSizePlant = plantSizePlant;
+                _lastPlantSizeGrass = plantSizeGrass;
+                RebuildPlantsForAllLoadedChunks();
+            }
             // Start background chunk loads (limited per frame)
             int budget = Mathf.Max(1, maxChunkLoadsPerFrame);
             while (budget-- > 0 && _pendingLoads.Count > 0)
@@ -382,6 +549,19 @@ public class WorldGenerator : MonoBehaviour
                     }
                 }
             }
+        }
+    }
+
+    // Rebuild only the plant meshes for all currently loaded chunks (cheap vs full chunk mesh rebuild)
+    private void RebuildPlantsForAllLoadedChunks()
+    {
+        if (!useChunkStreaming || !useChunkMeshing) return;
+        foreach (var kv in _chunks)
+        {
+            var chunk = kv.Value;
+            if (chunk == null) continue;
+            int fullY = Mathf.Clamp(chunk.sizeY, 1, worldHeight);
+            BuildChunkPlants(chunk, fullY);
         }
     }
 
@@ -470,25 +650,29 @@ public class WorldGenerator : MonoBehaviour
         if (leavesTexture == null)
             leavesTexture = Resources.Load<Texture2D>("Textures/leaves") ?? Resources.Load<Texture2D>("Textures/leaves_oak");
 
-        // Configure plant textures from PlantDatabase (set via ScriptableObjects)
-        if (plantDatabase != null)
-        {
-            var dbType = plantDatabase.GetType();
-            var plantsField = dbType.GetField("plants");
-            if (plantsField != null)
-            {
-                var arr = plantsField.GetValue(plantDatabase) as System.Array;
-                if (arr != null)
-                {
-                    foreach (var def in arr)
-                    {
-                        if (def == null) continue;
-                        var tex = def.GetType().GetField("texture")?.GetValue(def) as Texture2D;
-                        if (tex != null) ConfigureTexture(tex);
-                    }
-                }
-            }
-        }
+    // Plants: STRICT sources
+    // Editor: use Assets/Textures/plants/{fern,plant}.png
+    // Runtime: use Resources/Textures/plants/{fern,plant}
+    _extraPlantDefs.Clear();
+#if UNITY_EDITOR
+    var fernEd = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/plants/fern.png");
+    var plantEd = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/plants/plant.png");
+    var grassEd = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/plants/grass.png");
+    if (fernEd != null) { ConfigureTexture(fernEd); AddRuntimePlantIfNew(fernEd); }
+    if (plantEd != null) { ConfigureTexture(plantEd); AddRuntimePlantIfNew(plantEd); }
+    if (grassEd != null) { ConfigureTexture(grassEd); AddRuntimePlantIfNew(grassEd); }
+    if (fernEd == null && plantEd == null)
+    {
+        Debug.LogWarning("Plants: drop fern.png, plant.png, or grass.png into Assets/Textures/plants/. No other sources are used.");
+    }
+#else
+    var fernRes = Resources.Load<Texture2D>("Textures/plants/fern");
+    var plantRes = Resources.Load<Texture2D>("Textures/plants/plant");
+    var grassRes = Resources.Load<Texture2D>("Textures/plants/grass");
+    if (fernRes != null) { ConfigureTexture(fernRes); AddRuntimePlantIfNew(fernRes); }
+    if (plantRes != null) { ConfigureTexture(plantRes); AddRuntimePlantIfNew(plantRes); }
+    if (grassRes != null) { ConfigureTexture(grassRes); AddRuntimePlantIfNew(grassRes); }
+#endif
 
 #if UNITY_EDITOR
         // Editor-only fallback to load directly from Assets/Textures if not found in Resources
@@ -533,7 +717,14 @@ public class WorldGenerator : MonoBehaviour
         ConfigureTexture(sandTexture);
         ConfigureTexture(coalTexture);
     ConfigureTexture(logTexture);
-    ConfigureTexture(leavesTexture);
+        ConfigureTexture(leavesTexture);
+        // Leaves: previously forced Bilinear (causing blur). Now honor user-configurable setting.
+        if (leavesTexture != null)
+        {
+            leavesTexture.filterMode = leavesFilterMode;
+            leavesTexture.anisoLevel = 0;
+            try { leavesTexture.mipMapBias = leavesMipMapBias; } catch { /* ignore if platform disallows */ }
+        }
     // Plant textures are configured via PlantDatabase above
         
         // Assign textures to block data
@@ -549,13 +740,12 @@ public class WorldGenerator : MonoBehaviour
     void ConfigureTexture(Texture2D texture)
     {
         if (texture == null) return;
-        
         // Apply settings that reduce tiling appearance
         texture.filterMode = FilterMode.Point; // Pixelated look
         texture.wrapMode = TextureWrapMode.Repeat;
         texture.anisoLevel = 0; // No anisotropic filtering for pixel art
     }
-    
+
     void CreateBlockMaterials()
     {
         blockMaterials = new Material[BlockDatabase.blockTypes.Length];
@@ -588,27 +778,41 @@ public class WorldGenerator : MonoBehaviour
                 mat.name = BlockDatabase.blockTypes[i].blockName + "Material";
                 blockMaterials[i] = mat;
                 BlockDatabase.blockTypes[i].blockMaterial = mat;
+
+                // Ambient fill to avoid pitch-black faces in shadow
+                if (enableAmbientFill)
+                {
+                    Color ec = new Color(ambientFill, ambientFill, ambientFill, 1f);
+                    mat.SetColor("_EmissionColor", ec);
+                    mat.EnableKeyword("_EMISSION");
+                }
             }
         }
 
-        // Leaves need alpha clip & double sided tweaks if texture provided
+        // Leaves: ensure proper lighting with URP Simple Lit + alpha cutout
         if (BlockDatabase.blockTypes[(int)BlockType.Leaves].blockMaterial != null)
         {
             var lm = BlockDatabase.blockTypes[(int)BlockType.Leaves].blockMaterial;
-            lm.SetFloat("_AlphaClip", 1f);
-            lm.SetFloat("_Cutoff", 0.35f);
-            lm.EnableKeyword("_ALPHATEST_ON");
-            lm.SetFloat("_Cull", 2f); // back-face culling keeps interior cheaper; foliage is thick
-            lm.renderQueue = (int)RenderQueue.AlphaTest + 10; // after other alpha test to reduce sorting flicker
-            // Try swap to custom wind shader if present
+            var simpleLit = Shader.Find("Universal Render Pipeline/Simple Lit");
+            if (simpleLit != null)
+            {
+                lm.shader = simpleLit;
+            }
+            // Optional wind swap before applying settings so final shader gets configured once.
             if (enableLeafWind)
             {
                 var ws = Shader.Find("Custom/LeavesWind");
-                if (ws != null)
+                if (ws != null && ws.isSupported && IsShaderURPCompatible(ws))
                 {
                     lm.shader = ws;
                 }
+                else if (!_loggedLeavesWindFallback)
+                {
+                    _loggedLeavesWindFallback = true;
+                    Debug.LogWarning("Leaves wind shader not available/compatible; using URP Simple Lit instead to avoid pink.");
+                }
             }
+            ApplyLeafMaterialSettings(lm);
         }
 
         // Build a dedicated grass side material if we have a side texture
@@ -634,6 +838,32 @@ public class WorldGenerator : MonoBehaviour
             _grassSideOverlayMaterial.SetFloat("_Cutoff", 0.5f);
             _grassSideOverlayMaterial.EnableKeyword("_ALPHATEST_ON");
             _grassSideOverlayMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest; // after opaque dirt
+        }
+    }
+
+    // Centralized leaf material configuration so runtime swaps don't lose settings or cause unexpected blur
+    private void ApplyLeafMaterialSettings(Material lm)
+    {
+        if (lm == null) return;
+        lm.SetFloat("_AlphaClip", 1f);
+        lm.SetFloat("_Cutoff", Mathf.Clamp(leavesCutoff, 0.1f, 0.8f));
+        lm.EnableKeyword("_ALPHATEST_ON");
+        if (lm.HasProperty("_Cull")) lm.SetFloat("_Cull", 0f);
+        lm.doubleSidedGI = true;
+        if (lm.HasProperty("_AlphaToMask")) lm.SetFloat("_AlphaToMask", 1f);
+        lm.renderQueue = (int)RenderQueue.AlphaTest + 10;
+        if (lm.HasProperty("_Smoothness")) lm.SetFloat("_Smoothness", 0.0f);
+        if (lm.HasProperty("_Metallic")) lm.SetFloat("_Metallic", 0.0f);
+        lm.SetShaderPassEnabled("ShadowCaster", leavesReceiveShadows);
+        if (enableAmbientFill)
+        {
+            Color ec = new Color(ambientFill, ambientFill, ambientFill, 1f);
+            lm.SetColor("_EmissionColor", ec);
+            lm.EnableKeyword("_EMISSION");
+        }
+        else
+        {
+            lm.DisableKeyword("_EMISSION");
         }
     }
 
@@ -681,7 +911,7 @@ public class WorldGenerator : MonoBehaviour
         switch (t)
         {
             case BlockType.Air: return false;
-            case BlockType.Leaves: return false; // leaves are cutout; allow rendering faces behind
+            case BlockType.Leaves: return false; // non-occluding like before; let faces render behind leaves
             default: return true;
         }
     }
@@ -1172,8 +1402,8 @@ public class WorldGenerator : MonoBehaviour
                                         }
                                     }
                                     parent.transform.position = placePos;
-                                    // Use helper with definition from PlantDatabase via reflection
-                                    var def = PlantDB_PickByWeight(rng);
+                                    // Pick a plant definition from DB + runtime extras
+                                    var def = WG_PickPlantByWeight(rng);
                                     var tex = PlantDef_GetTexture(def);
                                     if (tex != null)
                                     {
@@ -1194,7 +1424,9 @@ public class WorldGenerator : MonoBehaviour
 
     public bool HasAnyPlants()
     {
-        return PlantDB_HasAny();
+        // Extras-only to avoid unintended textures and pink regressions
+        if (_extraPlantDefs.Count > 0) return true;
+        return false;
     }
     
     public bool ShouldRenderBlock(int x, int y, int z)
@@ -1763,8 +1995,6 @@ public class WorldGenerator : MonoBehaviour
                 // Per-tree RNG seeded by trunk position
                 int treeSeed = worldSeed ^ treeSeedOffset ^ (tx * 951631) ^ (tz * 105467);
                 System.Random rng = new System.Random(treeSeed);
-
-                // Trunk height
                 int minH = Mathf.Clamp(minTrunkHeight, 4, 128);
                 int maxH = Mathf.Clamp(maxTrunkHeight, minH + 1, 256);
                 int trunkH = rng.Next(minH, maxH + 1);
@@ -2229,7 +2459,7 @@ public class WorldGenerator : MonoBehaviour
                     var rng = new System.Random(seed);
 
                     // Pick a definition and its texture and params via reflection helpers
-                    var def = PlantDB_PickByWeight(rng);
+                    var def = WG_PickPlantByWeight(rng);
                     var tex = PlantDef_GetTexture(def);
                     if (tex == null) continue;
                     var hr = PlantDef_GetHeightRange(def);
@@ -2558,8 +2788,8 @@ public class WorldGenerator : MonoBehaviour
         {
             placePos = new Vector3(placePos.x, hit.point.y + 0.001f, placePos.z);
         }
-        parent.transform.position = placePos;
-        var def = PlantDB_PickByWeight(rng);
+    parent.transform.position = placePos;
+    var def = WG_PickPlantByWeight(rng);
         var tex = PlantDef_GetTexture(def);
         if (tex != null)
         {
@@ -2665,17 +2895,20 @@ public class WorldGenerator : MonoBehaviour
             tris.Add(vStart + 6); tris.Add(vStart + 7); tris.Add(vStart + 4);
         }
 
-        mesh.SetVertices(vertices);
-        mesh.SetUVs(0, uvs);
-        mesh.SetTriangles(tris, 0);
-        mesh.RecalculateBounds();
-        mesh.RecalculateNormals();
+    mesh.SetVertices(vertices);
+    mesh.SetUVs(0, uvs);
+    mesh.SetTriangles(tris, 0);
+    // Provide stable lighting: use an upright normal so cutout cards receive sky and main light
+    var norms = new List<Vector3>(vertices.Count);
+    for (int i = 0; i < vertices.Count; i++) norms.Add(Vector3.up);
+    mesh.SetNormals(norms);
+    mesh.RecalculateBounds();
         mf.sharedMesh = mesh;
 
         // Assign shared material (cached by texture)
     mr.sharedMaterial = GetPlantSharedMaterial(texture);
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        mr.receiveShadows = false;
+        mr.receiveShadows = true;
 
         // Single trigger collider on the parent to allow interaction
         var col = parent.AddComponent<BoxCollider>();
@@ -2729,10 +2962,143 @@ public class WorldGenerator : MonoBehaviour
         return null;
     }
 
+    // Unified picker over DB + runtime extras
+    private object WG_PickPlantByWeight(System.Random rng)
+    {
+        // Merge runtime extras (fern/plant) with DB entries that match allowed textures
+        // so both fern.png and plant.png can spawn even if only one was added as an extra.
+        var defs = new System.Collections.Generic.List<(object def, float weight)>();
+
+        // Gather extras and build an allow-list of textures by reference and by name
+        var allowedTextures = new HashSet<Texture2D>();
+    var allowedNames = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase) { "fern", "plant", "grass" };
+        foreach (var d in _extraPlantDefs)
+        {
+            var tex = PlantDef_GetTexture(d);
+            if (tex != null) { allowedTextures.Add(tex); }
+            var wf = d.GetType().GetField("weight");
+            float w = wf != null ? Mathf.Max(0f, (float)(wf.GetValue(d) ?? 0f)) : 1f;
+            if (tex == null || w <= 0f) continue;
+            defs.Add((d, w));
+        }
+
+        // Include DB entries. If we have extras, only include DB entries whose textures are
+        // either in the allow-list or clearly named fern/plant. If no extras, include all DB entries.
+        if (plantDatabase != null)
+        {
+            var dbType = plantDatabase.GetType();
+            var plantsField = dbType.GetField("plants");
+            var arr = plantsField?.GetValue(plantDatabase) as System.Array;
+            if (arr != null)
+            {
+                foreach (var d in arr)
+                {
+                    if (d == null) continue;
+                    var tex = PlantDef_GetTexture(d);
+                    var wf = d.GetType().GetField("weight");
+                    float w = wf != null ? Mathf.Max(0f, (float)(wf.GetValue(d) ?? 0f)) : 1f;
+                    if (tex == null || w <= 0f) continue;
+                    bool include;
+                    if (_extraPlantDefs.Count == 0)
+                    {
+                        include = true; // no extras detected, allow DB freely
+                    }
+                    else
+                    {
+                        include = allowedTextures.Contains(tex) || allowedNames.Contains(tex.name);
+                    }
+                    if (include)
+                    {
+                        defs.Add((d, w));
+                    }
+                }
+            }
+        }
+
+        if (defs.Count == 0) return null;
+        // Apply inspector weight multipliers by texture name
+        for (int i = 0; i < defs.Count; i++)
+        {
+            var tex = PlantDef_GetTexture(defs[i].def);
+            if (tex != null)
+            {
+                var n = tex.name.ToLowerInvariant();
+                float mul = 1f;
+                if (n.Contains("fern")) mul = plantWeightFern;
+                else if (n.Contains("grass")) mul = plantWeightGrass;
+                else if (n.Contains("plant")) mul = plantWeightPlant;
+                defs[i] = (defs[i].def, Mathf.Max(0f, defs[i].weight * mul));
+            }
+        }
+        float total = 0f; foreach (var e in defs) total += e.weight;
+        float r = (float)rng.NextDouble() * total;
+        foreach (var e in defs)
+        {
+            if (r < e.weight) return e.def; r -= e.weight;
+        }
+        return defs[0].def;
+    }
+
     private Texture2D PlantDef_GetTexture(object def)
     {
         if (def == null) return null;
         return def.GetType().GetField("texture")?.GetValue(def) as Texture2D;
+    }
+
+    // Register a runtime plant def for a texture if it isn't already present in DB or extras
+    private void AddRuntimePlantIfNew(Texture2D tex)
+    {
+        if (tex == null) return;
+        // Skip if this texture already exists in the PlantDatabase
+        if (IsTextureInDatabase(tex)) return;
+        // Skip if already added to extras
+        foreach (var d in _extraPlantDefs)
+        {
+            var existing = PlantDef_GetTexture(d);
+            if (existing == tex) return;
+        }
+        // Create a minimal runtime def with sensible defaults
+        var def = new RuntimePlantDef { texture = tex };
+        var name = tex != null ? tex.name.ToLowerInvariant() : string.Empty;
+        if (name.Contains("grass"))
+        {
+            // Shorter, slightly wider patches
+            def.heightRange = new Vector2(0.45f, 0.9f);
+            def.width = 1.0f;
+            def.yOffset = 0.01f;
+            def.weight = 1.2f; // a bit more common
+        }
+        else if (name.Contains("fern"))
+        {
+            def.heightRange = new Vector2(0.7f, 1.4f);
+            def.width = 0.8f;
+            def.yOffset = 0.01f;
+            def.weight = 1.0f;
+        }
+        else
+        {
+            def.heightRange = new Vector2(0.6f, 1.2f);
+            def.width = 0.9f;
+            def.yOffset = 0.01f;
+            def.weight = 1.0f;
+        }
+        _extraPlantDefs.Add(def);
+    }
+
+    private bool IsTextureInDatabase(Texture2D tex)
+    {
+        if (tex == null || plantDatabase == null) return false;
+        var dbType = plantDatabase.GetType();
+        var plantsField = dbType.GetField("plants");
+        var arr = plantsField?.GetValue(plantDatabase) as System.Array;
+        if (arr == null) return false;
+        foreach (var d in arr)
+        {
+            if (d == null) continue;
+            var t = PlantDef_GetTexture(d);
+            if (t == tex) return true;
+        }
+        return false;
     }
 
     private Vector2 PlantDef_GetHeightRange(object def)
@@ -2746,7 +3112,17 @@ public class WorldGenerator : MonoBehaviour
     {
         if (def == null) return 0.9f;
         var f = def.GetType().GetField("width");
-        return f != null ? Mathf.Clamp((float)(f.GetValue(def) ?? 0.9f), 0.1f, 2f) : 0.9f;
+        float baseW = f != null ? Mathf.Clamp((float)(f.GetValue(def) ?? 0.9f), 0.1f, 2f) : 0.9f;
+        // Apply per-kind size multiplier
+        var tex = PlantDef_GetTexture(def);
+        if (tex != null)
+        {
+            var n = tex.name.ToLowerInvariant();
+            if (n.Contains("fern")) baseW *= plantSizeFern;
+            else if (n.Contains("grass")) baseW *= plantSizeGrass;
+            else if (n.Contains("plant")) baseW *= plantSizePlant;
+        }
+        return baseW;
     }
 
     private float PlantDef_GetYOffset(object def)
@@ -2759,25 +3135,38 @@ public class WorldGenerator : MonoBehaviour
     private Material GetPlantSharedMaterial(Texture2D texture)
     {
         if (texture == null) return null;
-        if (_plantMaterialCache.TryGetValue(texture, out var mat)) return mat;
+        if (_plantMaterialCache.TryGetValue(texture, out var cached))
+        {
+            if (cached != null && cached.shader != null && cached.shader.isSupported) return cached;
+            // If cached is invalid or unsupported, drop it and rebuild
+            _plantMaterialCache.Remove(texture);
+        }
+
+        // Prefer wind shader when enabled, fallback to URP Simple Lit
         Shader shader = null;
         if (enablePlantWind)
         {
-            shader = Shader.Find("Custom/PlantWind");
+            var ws = Shader.Find("Custom/PlantWind");
+            if (ws != null && ws.isSupported && IsShaderURPCompatible(ws)) shader = ws;
         }
         if (shader == null)
-            shader = Shader.Find("Universal Render Pipeline/Unlit");
-        mat = new Material(shader)
         {
-            name = $"Plant_Unlit_{texture.name}",
+            shader = Shader.Find("Universal Render Pipeline/Simple Lit");
+        }
+
+        var mat = new Material(shader)
+        {
+            name = $"Plant_{texture.name}",
             color = Color.white,
             enableInstancing = true
         };
         mat.SetTexture("_BaseMap", texture);
         mat.mainTexture = texture;
-        mat.SetFloat("_AlphaClip", 1f);
-        mat.SetFloat("_Cutoff", 0.5f);
-        mat.SetFloat("_Cull", 0f); // double-sided
+        // Alpha clip and double-sided so cards render correctly
+        if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 1f);
+        if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", 0.5f);
+        if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f); // double-sided
+        if (mat.HasProperty("_AlphaToMask")) mat.SetFloat("_AlphaToMask", 1f);
         mat.EnableKeyword("_ALPHATEST_ON");
         mat.DisableKeyword("_ALPHABLEND_ON");
         mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
@@ -2802,6 +3191,26 @@ public class WorldGenerator : MonoBehaviour
             }
         }
         return null;
+    }
+
+    // Returns true if the shader is usable in the current pipeline (URP). We check RenderPipeline tag.
+    private bool IsShaderURPCompatible(Shader s)
+    {
+        if (s == null) return false;
+        try
+        {
+            var tmp = new Material(s);
+            string rp = tmp.GetTag("RenderPipeline", false);
+#if UNITY_EDITOR
+            if (!Application.isPlaying) DestroyImmediate(tmp); else Destroy(tmp);
+#else
+            Destroy(tmp);
+#endif
+            // Accept empty (some custom shaders omit tag but still work) or explicitly UniversalPipeline
+            if (string.IsNullOrEmpty(rp)) return true;
+            return rp.IndexOf("Universal", System.StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+        catch { return false; }
     }
 
     // Grid raycast using 3D DDA. Returns the first solid block hit and the empty cell just before it.

@@ -20,12 +20,12 @@ RenderSettings:
   m_FogDensity: 0.01
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
-  m_AmbientSkyColor: {r: 0.212, g: 0.227, b: 0.259, a: 1}
+  m_AmbientSkyColor: {r: 0.6431373, g: 0.6431373, b: 0.6431373, a: 1}
   m_AmbientEquatorColor: {r: 0.114, g: 0.125, b: 0.133, a: 1}
   m_AmbientGroundColor: {r: 0.047, g: 0.043, b: 0.035, a: 1}
-  m_AmbientIntensity: 1
-  m_AmbientMode: 0
-  m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
+  m_AmbientIntensity: 0.39
+  m_AmbientMode: 3
+  m_SubtractiveShadowColor: {r: 0.6415094, g: 0.6415094, b: 0.6415094, a: 1}
   m_SkyboxMaterial: {fileID: 2100000, guid: 9608213a80c78c146af27a947d1db94a, type: 2}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
@@ -93,7 +93,7 @@ LightmapSettings:
     m_ExportTrainingData: 0
     m_TrainingDataDestination: TrainingData
     m_LightProbeSampleCountMultiplier: 4
-  m_LightingDataAsset: {fileID: 112000000, guid: 4ebe94f0aee20ff4e81ba0dd371b7ae1, type: 2}
+  m_LightingDataAsset: {fileID: 0}
   m_LightingSettings: {fileID: 0}
 --- !u!196 &4
 NavMeshSettings:
@@ -129,6 +129,7 @@ GameObject:
   m_Component:
   - component: {fileID: 884223581}
   - component: {fileID: 884223580}
+  - component: {fileID: 884223582}
   m_Layer: 0
   m_Name: WorldGenerator
   m_TagString: Untagged
@@ -185,17 +186,18 @@ MonoBehaviour:
   logTexture: {fileID: 0}
   leavesTexture: {fileID: 0}
   plantDatabase: {fileID: 11400000, guid: 44330b0a711c68847915c9e2a961c5ee, type: 2}
-  plantDensity: 1
+  plantDensity: 0.2
   textureScaleVariation: 1
   textureOffsetVariation: 0
   enableFaceShading: 1
   eastWestShade: 0.9
   northSouthShade: 0.85
   bottomShade: 0.7
-  variationStrength: 0.08
+  variationStrength: 0.143
   enableTrees: 1
   treesPerChunk: 3
   treeSeedOffset: 98765
+  treeGridSize: 6
   minTrunkHeight: 6
   maxTrunkHeight: 12
   leavesRadius: 5
@@ -231,12 +233,23 @@ MonoBehaviour:
   leafWindScale: 0.5
   leafWindVerticalFactor: 0.3
   leafWindDirection: {x: 1, y: 0.3}
+  leavesOccludeFaces: 1
+  leavesCutoff: 0.35
+  leavesReceiveShadows: 1
+  enableAmbientFill: 0
+  ambientFill: 0
   enablePlantWind: 1
   plantWindAmplitude: 0.07
   plantWindSpeed: 1.4
   plantWindScale: 0.8
   plantWindVerticalFactor: 0.2
   plantWindVariation: 0.5
+  plantWeightFern: 0.6
+  plantWeightPlant: 5
+  plantWeightGrass: 5
+  plantSizeFern: 1
+  plantSizePlant: 1.447
+  plantSizeGrass: 1.47
   clearSavedEditsOnReload: 0
   reseedOnReload: 0
   triggerReloadInPlay: 0
@@ -259,6 +272,24 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &884223582
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 884223579}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d42b95a3ef2ab414685934ac0dda2032, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  setAmbientToSkybox: 0
+  ambientIntensity: 0.39
+  reflectionIntensity: 1
+  reflectionBounces: 1
+  applyOnAwake: 1
+  applyEveryUpdateInEditor: 1
 --- !u!134 &1063673009
 PhysicsMaterial:
   m_ObjectHideFlags: 0
@@ -283,6 +314,7 @@ GameObject:
   - component: {fileID: 1073604324}
   - component: {fileID: 1073604323}
   - component: {fileID: 1073604325}
+  - component: {fileID: 1073604326}
   m_Layer: 0
   m_Name: Directional Light
   m_TagString: Untagged
@@ -310,7 +342,7 @@ Light:
     m_Type: 1
     m_Resolution: -1
     m_CustomResolution: -1
-    m_Strength: 1
+    m_Strength: 0.65
     m_Bias: 0.05
     m_NormalBias: 0.4
     m_NearPlane: 0.2
@@ -344,9 +376,9 @@ Light:
   m_LightShadowCasterMode: 0
   m_AreaSize: {x: 1, y: 1}
   m_BounceIntensity: 1
-  m_ColorTemperature: 5449
+  m_ColorTemperature: 7403
   m_UseColorTemperature: 1
-  m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 0}
+  m_BoundingSphereOverride: {x: 4.0499e-41, y: 2.524355e-29, z: 0, w: 1.9579e-41}
   m_UseBoundingSphereOverride: 0
   m_UseViewFrustumForShadowCasterCull: 1
   m_ForceVisible: 0
@@ -363,13 +395,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1073604322}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.43974176, y: -0.14098158, z: 0.2170521, w: 0.8600232}
+  m_LocalRotation: {x: 0.37130764, y: -0.35202733, z: 0.32033578, w: 0.79724056}
   m_LocalPosition: {x: 0, y: 3, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 54.843, y: -5.141, z: 25.66}
+  m_LocalEulerAnglesHint: {x: 54.843, y: -34.171, z: 25.66}
 --- !u!114 &1073604325
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -393,6 +425,29 @@ MonoBehaviour:
   m_LightCookieSize: {x: 1, y: 1}
   m_LightCookieOffset: {x: 0, y: 0}
   m_SoftShadowQuality: 0
+--- !u!114 &1073604326
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1073604322}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f52ccb648812a6748b18d129c0e213ff, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  controlAllDirectionalLights: 1
+  targetLight: {fileID: 0}
+  shadowStrength: 0.65
+  adjustShadowDistance: 0
+  shadowDistance: 100
+  enableKeyboardAdjust: 1
+  decreaseKey: 91
+  increaseKey: 93
+  step: 0.05
+  applyOnAwake: 1
+  applyEveryUpdateInEditor: 1
 --- !u!1 &1426170045
 GameObject:
   m_ObjectHideFlags: 0

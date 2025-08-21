@@ -79,8 +79,8 @@ public class PlantBillboard : MonoBehaviour
         mesh.RecalculateNormals();
         mf.sharedMesh = mesh;
 
-    // Create URP/Lit alpha-cutout material instance
-    var shader = Shader.Find("Universal Render Pipeline/Unlit");
+    // Create URP Simple Lit alpha-cutout material instance (robust in URP)
+    var shader = Shader.Find("Universal Render Pipeline/Simple Lit");
         var mat = new Material(shader) { name = "Plant_Lit_Cutout", color = Color.white };
         mat.SetTexture("_BaseMap", texture);
         mat.mainTexture = texture;
@@ -94,8 +94,8 @@ public class PlantBillboard : MonoBehaviour
         mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
 
     mr.sharedMaterial = mat;
-    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; // avoid harsh black shadows from thin quads
-    mr.receiveShadows = false;
+    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; // avoid harsh thin-quad shadows
+    mr.receiveShadows = true;
     }
 
     void Start()
