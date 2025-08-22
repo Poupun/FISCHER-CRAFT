@@ -23,7 +23,6 @@ public class MinecraftCamera : MonoBehaviour
     private float verticalRotation = 0f;
     
     // References that may not exist yet
-    private PlayerInventory inventory;
     private WorldGenerator worldGenerator;
     
     void Start()
@@ -33,8 +32,7 @@ public class MinecraftCamera : MonoBehaviour
         playerCamera = GetComponentInChildren<Camera>();
         
         // Get optional components (may not exist)
-        inventory = GetComponent<PlayerInventory>();
-        worldGenerator = FindObjectOfType<WorldGenerator>();
+    worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
         
         // Setup cursor
         Cursor.lockState = CursorLockMode.Locked;
@@ -134,11 +132,7 @@ public class MinecraftCamera : MonoBehaviour
                 {
                     worldGenerator.PlaceBlock(blockInfo.position, BlockType.Air);
                     
-                    // Add to inventory if available
-                    if (inventory != null)
-                    {
-                        inventory.AddBlock(blockInfo.blockType);
-                    }
+                    // inventory removed: no collection
                 }
             }
         }
@@ -154,14 +148,7 @@ public class MinecraftCamera : MonoBehaviour
                 // Check distance to avoid placing inside player
                 if (Vector3.Distance(blockPosition, transform.position) > 1.5f)
                 {
-                    if (inventory != null && worldGenerator != null)
-                    {
-                        BlockType blockToPlace = inventory.GetCurrentBlock();
-                        if (blockToPlace != BlockType.Air && inventory.RemoveBlock(blockToPlace))
-                        {
-                            worldGenerator.PlaceBlock(blockPosition, blockToPlace);
-                        }
-                    }
+                    // inventory removed: placement disabled
                 }
             }
         }
