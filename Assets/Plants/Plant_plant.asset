@@ -18,6 +18,6 @@ MonoBehaviour:
   heightRange: {x: 0.6, y: 1.2}
   yOffset: 0.02
   quadsPerInstance: 2
-  weight: 0.33
-  noiseThreshold: 0.119
-  noiseScale: 0.51
+  weight: 0.7
+  noiseThreshold: 0
+  noiseScale: 0.15

@@ -55,6 +55,7 @@ namespace WorldGeneration.Chunks
             var verts = new List<Vector3>(chunk.sizeX * chunk.sizeY * chunk.sizeZ);
             var norms = new List<Vector3>();
             var uvs = new List<Vector2>();
+            var colors = new List<Color>(); // vertex color for fake lighting / variation
 
             // Helper to get/create tri list for a material
             List<int> GetList(Material m)
@@ -85,10 +86,23 @@ namespace WorldGeneration.Chunks
                             var dir = Directions[d];
                             int nx = x + dir.x, ny = y + dir.y, nz = z + dir.z;
                             BlockType neighbor = BlockType.Air;
-                            if (nx >= 0 && nx < chunk.sizeX && ny >= 0 && ny < chunk.sizeY && nz >= 0 && nz < chunk.sizeZ)
+                            bool inside = nx >= 0 && nx < chunk.sizeX && ny >= 0 && ny < chunk.sizeY && nz >= 0 && nz < chunk.sizeZ;
+                            if (inside)
+                            {
                                 neighbor = chunk.GetLocal(nx, ny, nz);
-                            // Emit face only if neighbor is Air
-                            if (neighbor != BlockType.Air) continue;
+                            }
+                            else if (world != null)
+                            {
+                                int worldX = chunk.coord.x * chunk.sizeX + nx;
+                                int worldY = ny;
+                                int worldZ = chunk.coord.y * chunk.sizeZ + nz;
+                                if (worldY >= 0 && worldY < world.worldHeight)
+                                {
+                                    neighbor = world.GetBlockType(new Vector3Int(worldX, worldY, worldZ));
+                                }
+                            }
+                            // Emit face if neighbor is air OR neighbor is non-opaque (e.g., leaves)
+                            if (neighbor != BlockType.Air && (world == null || world.IsBlockOpaque(neighbor))) continue;
 
                             var f = FaceVerts[d];
                             int vi = verts.Count;
@@ -101,6 +115,38 @@ namespace WorldGeneration.Chunks
                             norms.Add(n); norms.Add(n); norms.Add(n); norms.Add(n);
                             // Simple UVs
                             uvs.Add(QuadUV[0]); uvs.Add(QuadUV[1]); uvs.Add(QuadUV[2]); uvs.Add(QuadUV[3]);
+
+                            // --- Fake face lighting + subtle per-block variation ---
+                            // Minecraft-like depth: darken certain faces & bottom, lighten top.
+                            float shade = 1f;
+                            if (world != null && world.enableFaceShading)
+                            {
+                                // Direction order matches Directions array
+                                switch (d)
+                                {
+                                    case 2: shade = 1.00f; break; // +Y top brightest
+                                    case 3: shade = world.bottomShade; break; // -Y bottom darkest
+                                    case 0: // +X
+                                    case 1: // -X
+                                        shade = world.eastWestShade; break;
+                                    case 4: // +Z (forward)
+                                    case 5: // -Z (back)
+                                        shade = world.northSouthShade; break;
+                                }
+
+                                // Subtle per-block random variation to break tiling
+                                if (world.variationStrength > 0f)
+                                {
+                                    int worldX = chunk.coord.x * chunk.sizeX + x;
+                                    int worldY = y;
+                                    int worldZ = chunk.coord.y * chunk.sizeZ + z;
+                                    float h = WorldGenerator.Hash(worldX, worldY, worldZ); // 0..1
+                                    float v = (h - 0.5f) * 2f * world.variationStrength; // -var..+var
+                                    shade = Mathf.Clamp01(shade * (1f + v));
+                                }
+                            }
+                            var c = new Color(shade, shade, shade, 1f);
+                            colors.Add(c); colors.Add(c); colors.Add(c); colors.Add(c);
 
                             // Choose single material per face (e.g., top/bottom or non-grass blocks)
                             Material faceMat = null;
@@ -128,6 +174,7 @@ namespace WorldGeneration.Chunks
             mesh.SetVertices(verts);
             mesh.SetNormals(norms);
             mesh.SetUVs(0, uvs);
+            if (colors.Count == verts.Count) mesh.SetColors(colors);
             // Stable ordering by material name (fallback to instanceID)
             var materials = new List<Material>(trisByMaterial.Keys);
             materials.Sort((a, b) =>

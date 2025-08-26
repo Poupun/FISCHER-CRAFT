@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/UnityMcpBridge",
     "com.unity.ai.navigation": "2.0.5",
     "com.unity.collab-proxy": "2.8.2",
     "com.unity.ide.rider": "3.0.31",
@@ -42,15 +43,13 @@
     "com.unity.modules.video": "1.0.0",
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
-    "com.unity.modules.xr": "1.0.0",
-    "com.ivanmurzak.unity.mcp": "0.12.0"
+    "com.unity.modules.xr": "1.0.0"
   },
   "scopedRegistries": [
     {
       "name": "package.openupm.com",
       "url": "https://package.openupm.com",
       "scopes": [
-        "com.ivanmurzak.unity.mcp",
         "org.nuget.microsoft.aspnetcore.connections.abstractions",
         "org.nuget.microsoft.aspnetcore.http.connections.client",
         "org.nuget.microsoft.aspnetcore.http.connections.common",
@@ -110,7 +109,10 @@
         "org.nuget.system.text.encodings.web",
         "org.nuget.system.text.json",
         "org.nuget.system.threading.channels",
-        "org.nuget.system.threading.tasks.extensions"
+        "org.nuget.system.threading.tasks.extensions",
+        "extensions.unity",
+        "org.nuget.microsoft",
+        "org.nuget.system"
       ]
     }
   ]

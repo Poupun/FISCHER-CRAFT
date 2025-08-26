@@ -30,7 +30,6 @@ public class FirstPersonController : MonoBehaviour
     private float footstepTimer;
     
     // References
-    private PlayerInventory inventory;
     private WorldGenerator worldGenerator;
     
     // Input
@@ -48,8 +47,7 @@ public class FirstPersonController : MonoBehaviour
         {
             cameraShake = playerCamera.GetComponent<CameraShake>();
         }
-        inventory = GetComponent<PlayerInventory>();
-        worldGenerator = FindObjectOfType<WorldGenerator>();
+    worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
         
         // Setup cursor
         Cursor.lockState = CursorLockMode.Locked;
@@ -166,11 +164,7 @@ public class FirstPersonController : MonoBehaviour
                         cameraShake.ShakeCamera();
                     }
                     
-                    // Add block to inventory
-                    if (inventory != null)
-                    {
-                        inventory.AddBlock(blockInfo.blockType);
-                    }
+                    // inventory removed: no item collection
                 }
             }
         }
@@ -186,19 +180,9 @@ public class FirstPersonController : MonoBehaviour
                 // Check if position is not inside player
                 if (Vector3.Distance(blockPosition, transform.position) > 1.5f)
                 {
-                    if (inventory != null && worldGenerator != null)
+                    if (worldGenerator != null)
                     {
-                        BlockType blockToPlace = inventory.GetCurrentBlock();
-                        if (blockToPlace != BlockType.Air && inventory.RemoveBlock(blockToPlace))
-                        {
-                            worldGenerator.PlaceBlock(blockPosition, blockToPlace);
-                            
-                            // Small camera shake for placing
-                            if (cameraShake != null)
-                            {
-                                cameraShake.ShakeCamera(0.05f, 0.02f);
-                            }
-                        }
+                        // inventory removed: place a default block (e.g., Dirt) if desired; currently disabled
                     }
                 }
             }

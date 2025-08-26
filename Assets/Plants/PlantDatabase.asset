@@ -13,4 +13,11 @@ MonoBehaviour:
   m_Name: PlantDatabase
   m_EditorClassIdentifier: 
   plants:
+  - {fileID: 0}
+  - {fileID: 11400000, guid: e5f2334daf2ce1949b21de96de16d623, type: 2}
+  - {fileID: 11400000, guid: 79e7e9d0fae264a4c8eb2cd0fe8d79dd, type: 2}
+  - {fileID: 11400000, guid: 4ada32b1e9edfb5458ab6d317d715bb8, type: 2}
+  - {fileID: 11400000, guid: df722c99b639bff45903dc528a4e6fbc, type: 2}
+  - {fileID: 11400000, guid: ec0eafd178e093e46b64e1e131d19459, type: 2}
+  - {fileID: 11400000, guid: 35efc3c815039334291fd524413e7f0b, type: 2}
   - {fileID: 11400000, guid: 19393b47026fc8b4da88cf49e750e629, type: 2}
