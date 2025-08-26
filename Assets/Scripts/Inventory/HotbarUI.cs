@@ -91,10 +91,23 @@ public class HotbarUI : MonoBehaviour
                 Transform child = slotContainer.GetChild(i);
                 var images = child.GetComponentsInChildren<Image>(true);
                 Image bg = null, icon = null;
-                if (images.Length > 0) bg = images[0];
-                if (images.Length > 1) icon = images[1];
+                
+                // Direct name-based detection - find the Icon component specifically
+                foreach (var img in images)
+                {
+                    if (img.name.ToLower().Contains("background") || img.name.ToLower().Contains("bg"))
+                        bg = img;
+                    else if (img.name.ToLower().Contains("icon"))
+                        icon = img;
+                }
+                
                 var text = child.GetComponentInChildren<TextMeshProUGUI>(true);
                 slots[i] = new SlotUI { background = bg, icon = icon, countText = text, shownType = BlockType.Air, shownCount = -999, rect = child as RectTransform };
+                
+                
+                
+                // Add drag & drop functionality to existing slots
+                SetupDragDrop(child.gameObject, i, bg, icon, text);
             }
             return;
         }
@@ -111,6 +124,9 @@ public class HotbarUI : MonoBehaviour
                 Image icon = images.Length > 1 ? images[1] : null;
                 var text = go.GetComponentInChildren<TextMeshProUGUI>(true);
                 slots[i] = new SlotUI { background = bg, icon = icon, countText = text, shownType = BlockType.Air, shownCount = -999, rect = go.transform as RectTransform };
+                
+                // Add drag & drop functionality to prefab slots
+                SetupDragDrop(go, i, bg, icon, text);
             }
             return;
         }
@@ -138,6 +154,9 @@ public class HotbarUI : MonoBehaviour
                 rect.sizeDelta = new Vector2(48,48);
                 slots[i] = new SlotUI { background = bgImg, icon = iconImg, countText = tmp, shownType = BlockType.Air, shownCount = -999, rect = rect };
                 if (showTypeLabel && tmp != null) { tmp.fontSize = typeLabelFontSize; tmp.color = typeLabelColor; }
+                
+                // Add drag & drop functionality to generated slots
+                SetupDragDrop(slotGO, i, bgImg, iconImg, tmp);
             }
         }
     }
@@ -161,6 +180,7 @@ public class HotbarUI : MonoBehaviour
         if (!force && !typeChanged && !countChanged) return;
         ui.shownType = stack.blockType;
         ui.shownCount = stack.count;
+        // Handle Icon component only - assign block sprites
         if (ui.icon != null)
         {
             if (stack.IsEmpty)
@@ -260,5 +280,25 @@ public class HotbarUI : MonoBehaviour
             sb.AppendLine($" {i}: {st.blockType} x{st.count} -> {spriteName}");
         }
         Debug.Log(sb.ToString());
+    }
+
+    void SetupDragDrop(GameObject slotObject, int slotIndex, Image background, Image icon, TextMeshProUGUI countText)
+    {
+        // Add InventorySlot component for drag & drop functionality
+        InventorySlot inventorySlot = slotObject.GetComponent<InventorySlot>();
+        if (inventorySlot == null)
+        {
+            inventorySlot = slotObject.AddComponent<InventorySlot>();
+        }
+        
+        // Configure the InventorySlot component
+        inventorySlot.background = background;
+        inventorySlot.icon = icon;
+        inventorySlot.countText = countText;
+        inventorySlot.slotIndex = slotIndex;
+        inventorySlot.normalColor = normalColor;
+        inventorySlot.highlightColor = selectedColor;
+        
+       
     }
 }
