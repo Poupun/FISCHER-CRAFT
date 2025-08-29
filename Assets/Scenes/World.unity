@@ -282,12 +282,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 525372848}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -962.73676, y: -538.46497, z: 0}
+  m_LocalScale: {x: 1.7568189, y: 1.7568189, z: 1.7568189}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 2112105365}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &639936485
 GameObject:
@@ -317,7 +317,7 @@ RectTransform:
   m_GameObject: {fileID: 639936485}
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 0.8, y: 0.8, z: 0.8}
   m_ConstrainProportionsScale: 1
   m_Children:
   - {fileID: 107248622}
@@ -381,7 +381,7 @@ MonoBehaviour:
   inventory: {fileID: 1426170051}
   inventoryGrid: {fileID: 107248622}
   hotbarGrid: {fileID: 0}
-  slotPrefab: {fileID: 1400448030}
+  slotPrefab: {fileID: 3349832650605588863, guid: 30d9fd55f27527c48aa95762d5a6d20b, type: 3}
   inventoryRows: 3
   inventoryColumns: 9
   slotSize: {x: 100, y: 100}
@@ -1428,6 +1428,7 @@ RectTransform:
   m_LocalScale: {x: 0, y: 0, z: 0}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 525372850}
   - {fileID: 1752783397}
   - {fileID: 639936486}
   m_Father: {fileID: 0}
@@ -1693,4 +1694,3 @@ SceneRoots:
   - {fileID: 1426170050}
   - {fileID: 1073604324}
   - {fileID: 461860075}
-  - {fileID: 525372850}
