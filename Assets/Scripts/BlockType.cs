@@ -11,7 +11,12 @@ public enum BlockType
     Sand,
     Coal,
     Log,
-    Leaves
+    Leaves,
+    Bedrock,
+    Gravel,
+    Iron,
+    Gold,
+    Diamond
 }
 
 [System.Serializable]
@@ -49,9 +54,14 @@ public static class BlockDatabase
         new BlockData(BlockType.Stone, "Stone", Color.gray),
         new BlockData(BlockType.Water, "Water", Color.blue),
         new BlockData(BlockType.Sand, "Sand", Color.white),
-    new BlockData(BlockType.Coal, "Coal", Color.black),
-    new BlockData(BlockType.Log, "Log", new Color(0.55f, 0.27f, 0.07f)),
-    new BlockData(BlockType.Leaves, "Leaves", new Color(0.2f, 0.6f, 0.2f))
+        new BlockData(BlockType.Coal, "Coal", Color.black),
+        new BlockData(BlockType.Log, "Log", new Color(0.55f, 0.27f, 0.07f)),
+        new BlockData(BlockType.Leaves, "Leaves", new Color(0.2f, 0.6f, 0.2f)),
+        new BlockData(BlockType.Bedrock, "Bedrock", new Color(0.2f, 0.2f, 0.2f)),
+        new BlockData(BlockType.Gravel, "Gravel", new Color(0.5f, 0.5f, 0.5f)),
+        new BlockData(BlockType.Iron, "Iron Ore", new Color(0.8f, 0.7f, 0.6f)),
+        new BlockData(BlockType.Gold, "Gold Ore", new Color(1.0f, 0.8f, 0.0f)),
+        new BlockData(BlockType.Diamond, "Diamond Ore", new Color(0.4f, 0.8f, 1.0f))
     };
     
     public static BlockData GetBlockData(BlockType blockType)

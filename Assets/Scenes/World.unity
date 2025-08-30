@@ -119,6 +119,19 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!134 &95932585
+PhysicsMaterial:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: ' (Instance) (Instance) (Instance) (Instance) (Instance)'
+  serializedVersion: 2
+  m_DynamicFriction: 0.6
+  m_StaticFriction: 0.6
+  m_Bounciness: 0
+  m_FrictionCombine: 0
+  m_BounceCombine: 0
 --- !u!1 &107248621
 GameObject:
   m_ObjectHideFlags: 0
@@ -154,19 +167,60 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 771, y: 474}
   m_Pivot: {x: 0.5, y: 0.5}
---- !u!134 &114447738
-PhysicsMaterial:
+--- !u!1 &454117962
+GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: ' (Instance) (Instance) (Instance) (Instance)'
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 454117963}
+  - component: {fileID: 454117964}
+  m_Layer: 0
+  m_Name: PlayerStatsUI
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &454117963
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 454117962}
   serializedVersion: 2
-  m_DynamicFriction: 0.6
-  m_StaticFriction: 0.6
-  m_Bounciness: 0
-  m_FrictionCombine: 0
-  m_BounceCombine: 0
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -917.45734, y: -565.03986, z: 0}
+  m_LocalScale: {x: 1.6741922, y: 1.6741922, z: 1.6741922}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 1763933864}
+  - {fileID: 1172393808}
+  m_Father: {fileID: 2112105365}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &454117964
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 454117962}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cc671bf3bda05f44284f59f613bf46b6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  healthBarParent: {fileID: 0}
+  healthIconPrefab: {fileID: 0}
+  hungerBarParent: {fileID: 0}
+  hungerIconPrefab: {fileID: 0}
+  healthFullSprite: {fileID: 0}
+  healthEmptySprite: {fileID: 0}
+  hungerFullSprite: {fileID: 0}
+  hungerEmptySprite: {fileID: 0}
 --- !u!1 &461860072
 GameObject:
   m_ObjectHideFlags: 0
@@ -418,19 +472,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   worldWidth: 16
   worldHeight: 102
-  worldDepth: 16
-  generateSuperflat: 1
-  flatStoneLayers: 1
-  flatDirtLayers: 3
-  flatGrassLayers: 1
-  enableHeightVariation: 1
+  worldDepth: 100
   worldSeed: 12345
-  heightVariation: 4
-  heightNoiseScale: 48
-  heightNoiseOctaves: 3
-  heightNoisePersistence: 0.5
-  heightNoiseLacunarity: 2
-  heightNoiseBias: 0
   useChunkStreaming: 1
   chunkSizeX: 16
   chunkSizeZ: 16
@@ -452,6 +495,11 @@ MonoBehaviour:
   coalTexture: {fileID: 0}
   logTexture: {fileID: 2800000, guid: 274accba039c93943a8997b11e463bbb, type: 3}
   leavesTexture: {fileID: 2800000, guid: ddeb442baf2b0d64b8674b1e8890ab4a, type: 3}
+  bedrockTexture: {fileID: 0}
+  gravelTexture: {fileID: 0}
+  ironTexture: {fileID: 0}
+  goldTexture: {fileID: 0}
+  diamondTexture: {fileID: 0}
   plantDatabase: {fileID: 11400000, guid: 44330b0a711c68847915c9e2a961c5ee, type: 2}
   plantDensity: 0.15
   textureScaleVariation: 1
@@ -704,6 +752,41 @@ MonoBehaviour:
   step: 0.05
   applyOnAwake: 1
   applyEveryUpdateInEditor: 1
+--- !u!1 &1172393807
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1172393808}
+  m_Layer: 0
+  m_Name: HungerBar
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1172393808
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1172393807}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 454117963}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 0, y: 150}
+  m_SizeDelta: {x: 100, y: 100}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &1400448030 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 7973261085603349039, guid: 9a0b0df0ff12a404abef0bac44e0176b, type: 3}
@@ -722,6 +805,8 @@ GameObject:
   - component: {fileID: 1426170048}
   - component: {fileID: 1426170046}
   - component: {fileID: 1426170051}
+  - component: {fileID: 1426170052}
+  - component: {fileID: 1426170053}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -862,7 +947,7 @@ CharacterController:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1426170045}
-  m_Material: {fileID: 114447738}
+  m_Material: {fileID: 95932585}
   m_IncludeLayers:
     serializedVersion: 2
     m_Bits: 0
@@ -913,6 +998,50 @@ MonoBehaviour:
   hotbar: []
   mainInventory: []
   selectedIndex: 0
+--- !u!114 &1426170052
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1426170045}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 559917fe1ccb44043a308ac7cb43b505, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  maxHealth: 20
+  maxHunger: 20
+  hungerDecayRate: 1
+  healthLossOnStarvation: 1
+  starvationInterval: 4
+  enableHealthRegen: 1
+  regenThreshold: 18
+  regenAmount: 1
+  regenInterval: 4
+--- !u!114 &1426170053
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1426170045}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 201b69985accb964da4cf390715cff3d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  miningRange: 5
+  blockLayerMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  globalMiningSpeedMultiplier: 5
+  miningParticlesPrefab: {fileID: 0}
+  miningAudioSource: {fileID: 0}
+  miningStartSounds: []
+  miningSounds: []
+  blockBreakSounds: []
+  progressUpdateRate: 0.1
 --- !u!1 &1634668430
 GameObject:
   m_ObjectHideFlags: 0
@@ -1316,6 +1445,41 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1752783396}
   m_CullTransparentMesh: 1
+--- !u!1 &1763933863
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1763933864}
+  m_Layer: 0
+  m_Name: HealthBar
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1763933864
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1763933863}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 454117963}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 0, y: 200}
+  m_SizeDelta: {x: 100, y: 100}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &2112105359
 GameObject:
   m_ObjectHideFlags: 0
@@ -1431,6 +1595,7 @@ RectTransform:
   - {fileID: 525372850}
   - {fileID: 1752783397}
   - {fileID: 639936486}
+  - {fileID: 454117963}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}

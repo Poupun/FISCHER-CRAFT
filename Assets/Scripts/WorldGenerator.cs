@@ -11,34 +11,12 @@ public class WorldGenerator : MonoBehaviour
     public int worldHeight = 16;
     public int worldDepth = 16;
 
-    [Header("Superflat Settings")] 
-    [Tooltip("When enabled, generate a Minecraft-like superflat world (no caves, plains only)")]
-    public bool generateSuperflat = true;
-    [Min(0)] public int flatStoneLayers = 1;   // acts as bedrock for now
-    [Min(0)] public int flatDirtLayers = 3;
-    [Min(0)] public int flatGrassLayers = 1;
-
-    [Header("Height Variation (Plains Biome)")]
-    [Tooltip("Enable simple noise-based height variation for the superflat world (acts as first plain biome prototype)")]
-    public bool enableHeightVariation = true;
+    [Header("World Generation")]
     [Tooltip("World seed for deterministic generation")]
     public int worldSeed = 12345;
-    [Tooltip("Amplitude (in blocks) of height variation above/below the base grass level")]
-    [Min(0)] public int heightVariation = 4;
-    [Tooltip("Perlin/Fractal noise scale (higher = smoother, lower = more frequent variation)")]
-    public float heightNoiseScale = 48f;
-    [Header("Fractal Noise")] 
-    [Tooltip("Number of octaves for fractal noise (1 = basic Perlin)")]
-    [Range(1,6)] public int heightNoiseOctaves = 3;
-    [Tooltip("Persistence factor for amplitude across octaves")]
-    [Range(0f,1f)] public float heightNoisePersistence = 0.5f;
-    [Tooltip("Lacunarity factor for frequency growth across octaves")]
-    [Range(1.5f,4f)] public float heightNoiseLacunarity = 2.0f;
-    [Tooltip("Vertical bias added after noise mapping (-1..1) before scaling; can shift overall terrain up or down relative to base")]
-    [Range(-1f,1f)] public float heightNoiseBias = 0f;
 
     [Header("Chunk Streaming")] 
-    [Tooltip("Enable player-centered chunk streaming for infinite superflat world")]
+    [Tooltip("Enable player-centered chunk streaming for infinite world")]
     public bool useChunkStreaming = true;
     [Min(4)] public int chunkSizeX = 16;
     [Min(4)] public int chunkSizeZ = 16;
@@ -80,6 +58,11 @@ public class WorldGenerator : MonoBehaviour
     public Texture2D coalTexture;
     public Texture2D logTexture;
     public Texture2D leavesTexture;
+    public Texture2D bedrockTexture;
+    public Texture2D gravelTexture;
+    public Texture2D ironTexture;
+    public Texture2D goldTexture;
+    public Texture2D diamondTexture;
 
     [Header("Plants (New)")]
     [Tooltip("Scriptable Object list of plants with textures, sizes, and weights.")]
@@ -920,52 +903,14 @@ public class WorldGenerator : MonoBehaviour
     {
         worldData = new BlockType[worldWidth, worldHeight, worldDepth];
 
-        if (generateSuperflat)
+        // Generate world using the new clean system
+        for (int x = 0; x < worldWidth; x++)
         {
-            // Clamp layers to available height
-            int stone = Mathf.Max(0, flatStoneLayers);
-            int dirt = Mathf.Max(0, flatDirtLayers);
-            int grass = Mathf.Max(0, flatGrassLayers);
-            int totalLayers = Mathf.Min(worldHeight, stone + dirt + grass);
-            int grassStart = Mathf.Max(0, stone + dirt);
-
-            for (int x = 0; x < worldWidth; x++)
+            for (int z = 0; z < worldDepth; z++)
             {
-                for (int z = 0; z < worldDepth; z++)
+                for (int y = 0; y < worldHeight; y++)
                 {
-                    for (int y = 0; y < worldHeight; y++)
-                    {
-                        BlockType blockType = BlockType.Air;
-                        if (y < stone)
-                            blockType = BlockType.Stone; // acting as bedrock for now
-                        else if (y < stone + dirt)
-                            blockType = BlockType.Dirt;
-                        else if (y < totalLayers) // up to grass layers
-                            blockType = BlockType.Grass;
-                        else
-                            blockType = BlockType.Air;
-
-                        worldData[x, y, z] = blockType;
-                    }
-                }
-            }
-        }
-        else
-        {
-            // Legacy simple stacked layers (kept for reference/testing)
-            for (int x = 0; x < worldWidth; x++)
-            {
-                for (int z = 0; z < worldDepth; z++)
-                {
-                    for (int y = 0; y < worldHeight; y++)
-                    {
-                        BlockType blockType = BlockType.Air;
-                        if (y == 0) blockType = BlockType.Stone; // Bedrock substitute
-                        else if (y < 3) blockType = BlockType.Stone;
-                        else if (y < 6) blockType = BlockType.Dirt;
-                        else if (y == 6) blockType = BlockType.Grass;
-                        worldData[x, y, z] = blockType;
-                    }
+                    worldData[x, y, z] = GenerateBlockTypeAt(new Vector3Int(x, y, z));
                 }
             }
         }
@@ -975,97 +920,86 @@ public class WorldGenerator : MonoBehaviour
         SpawnPlants();
     }
 
-    // Determine block type at a given world position according to current generation settings
+    // Clean, simple world generation - Minecraft-style layers
     public BlockType GenerateBlockTypeAt(Vector3Int worldPos)
     {
-        if (!generateSuperflat)
-        {
-            // Legacy stack based on Y only (kept for reference)
-            if (worldPos.y == 0) return BlockType.Stone;
-            if (worldPos.y < 3) return BlockType.Stone;
-            if (worldPos.y < 6) return BlockType.Dirt;
-            if (worldPos.y == 6) return BlockType.Grass;
-            return BlockType.Air;
-        }
-
-        // Superflat with optional height variation
-        int stone = Mathf.Max(0, flatStoneLayers);
-        int dirt = Mathf.Max(0, flatDirtLayers);
-        int grass = Mathf.Max(0, flatGrassLayers);
         if (worldPos.y < 0 || worldPos.y >= worldHeight) return BlockType.Air;
 
-        // Base top (zero-based Y) for grass without variation
-        int baseTop = stone + dirt + grass - 1;
-        int columnTop = baseTop;
-        if (enableHeightVariation && heightVariation > 0)
+        // Bedrock layer (unbreakable foundation)
+        if (worldPos.y == 0) return BlockType.Bedrock;
+        
+        // Deep underground (Y 1-12) - Stone with ores
+        if (worldPos.y <= 12)
         {
-            columnTop = GetColumnTopY(worldPos.x, worldPos.z, stone, dirt, grass, baseTop);
+            return GenerateUndergroundBlock(worldPos);
         }
-
-        if (worldPos.y < stone) return BlockType.Stone;
-        // Ensure we don't index above column top; everything between stone and top-1 is dirt
-        if (worldPos.y < columnTop) return BlockType.Dirt;
-        if (worldPos.y == columnTop) return BlockType.Grass;
-        return BlockType.Air;
+        
+        // Underground stone layer (Y 13-25)
+        if (worldPos.y <= 25)
+        {
+            // Mix of stone and some ores
+            System.Random rng = new System.Random(worldPos.x * 73856093 ^ worldPos.y * 19349663 ^ worldPos.z * 83492791 ^ worldSeed);
+            float chance = (float)rng.NextDouble();
+            
+            if (chance < 0.05f) return BlockType.Coal;
+            if (chance < 0.08f && worldPos.y <= 20) return BlockType.Iron;
+            if (chance < 0.15f) return BlockType.Gravel;
+            
+            return BlockType.Stone;
+        }
+        
+        // Surface terrain (Y 26+)
+        return GenerateSurfaceBlock(worldPos);
     }
-
-    // Returns top grass Y for a column (world XZ) using current noise settings.
-    // stone/dirt/grass parameters are passed for performance to avoid recomputing.
-    private int GetColumnTopY(int worldX, int worldZ, int stone, int dirt, int grass, int baseTop)
+    
+    private BlockType GenerateUndergroundBlock(Vector3Int worldPos)
     {
-        if (!enableHeightVariation || heightVariation <= 0)
-            return baseTop;
-        float n = EvaluateHeightNoise(worldX, worldZ); // [-1,1]
-        n += heightNoiseBias; // apply user bias
-        n = Mathf.Clamp(n, -1f, 1f);
-        int delta = Mathf.RoundToInt(n * heightVariation);
-        int columnTop = baseTop + delta;
-        // Prevent grass from dipping below stone layer (so we always have at least a dirt/grass cap).
-        int minTop = stone; // allow grass directly above stone if negative variation large
-        columnTop = Mathf.Max(minTop, columnTop);
-        columnTop = Mathf.Min(worldHeight - 1, columnTop);
-        return columnTop;
+        System.Random rng = new System.Random(worldPos.x * 73856093 ^ worldPos.y * 19349663 ^ worldPos.z * 83492791 ^ worldSeed);
+        float chance = (float)rng.NextDouble();
+        float depthFactor = (13f - worldPos.y) / 13f; // Deeper = rarer ores
+        
+        // Diamond (very rare, only deep)
+        if (worldPos.y <= 8 && chance < 0.003f * depthFactor)
+            return BlockType.Diamond;
+        
+        // Gold (rare, deeper preferred)
+        if (worldPos.y <= 10 && chance < 0.008f * depthFactor)
+            return BlockType.Gold;
+        
+        // Iron (common)
+        if (chance < 0.06f)
+            return BlockType.Iron;
+        
+        // Coal (most common)
+        if (chance < 0.15f)
+            return BlockType.Coal;
+            
+        return BlockType.Stone;
+    }
+    
+    private BlockType GenerateSurfaceBlock(Vector3Int worldPos)
+    {
+        // Simple height-based surface generation
+        float noise = Mathf.PerlinNoise((worldPos.x + worldSeed) * 0.02f, (worldPos.z + worldSeed) * 0.02f);
+        int surfaceHeight = Mathf.RoundToInt(28 + noise * 6); // Surface around Y=28-34
+        
+        if (worldPos.y < surfaceHeight - 4) return BlockType.Stone;
+        if (worldPos.y < surfaceHeight) return BlockType.Dirt;
+        if (worldPos.y == surfaceHeight) return BlockType.Grass;
+        
+        return BlockType.Air;
     }
 
     // Public helper (used in chunk streaming to compute useful Y per chunk)
     public int GetColumnTopY(int worldX, int worldZ)
     {
-        int stone = Mathf.Max(0, flatStoneLayers);
-        int dirt = Mathf.Max(0, flatDirtLayers);
-        int grass = Mathf.Max(0, flatGrassLayers);
-        int baseTop = stone + dirt + grass - 1;
-        return GetColumnTopY(worldX, worldZ, stone, dirt, grass, baseTop);
+        // Use the same surface generation logic as GenerateSurfaceBlock
+        float noise = Mathf.PerlinNoise((worldX + worldSeed) * 0.02f, (worldZ + worldSeed) * 0.02f);
+        int surfaceHeight = Mathf.RoundToInt(28 + noise * 6); // Surface around Y=28-34
+        return Mathf.Min(worldHeight - 1, surfaceHeight);
     }
 
-    // Fractal noise evaluation mapped to [-1,1]
-    private float EvaluateHeightNoise(int x, int z)
-    {
-        // Fast path single octave
-        if (heightNoiseOctaves <= 1)
-        {
-            float nx = (x + worldSeed * 13) / Mathf.Max(0.0001f, heightNoiseScale);
-            float nz = (z + worldSeed * 29) / Mathf.Max(0.0001f, heightNoiseScale);
-            float p = Mathf.PerlinNoise(nx, nz); // [0,1]
-            return p * 2f - 1f;
-        }
-
-        float amplitude = 1f;
-        float frequency = 1f;
-        float sum = 0f;
-        float norm = 0f;
-        for (int o = 0; o < heightNoiseOctaves; o++)
-        {
-            float nx = (x + worldSeed * 13) / Mathf.Max(0.0001f, heightNoiseScale) * frequency;
-            float nz = (z + worldSeed * 29) / Mathf.Max(0.0001f, heightNoiseScale) * frequency;
-            float p = Mathf.PerlinNoise(nx, nz); // [0,1]
-            sum += (p * 2f - 1f) * amplitude;
-            norm += amplitude;
-            amplitude *= heightNoisePersistence;
-            frequency *= heightNoiseLacunarity;
-        }
-        if (norm <= 0f) return 0f;
-        return Mathf.Clamp(sum / norm, -1f, 1f);
-    }
+    // Removed old complex noise system - now using simple Perlin noise in surface generation
 
     // --- Chunk streaming helpers ---
     private void EnsureChunksRoot()
@@ -1091,12 +1025,8 @@ public class WorldGenerator : MonoBehaviour
     }
     public string GetBiomeAt(Vector3 worldPos)
     {
-        // Placeholder until multiple biomes are added. Current terrain simulates plains.
-        if (generateSuperflat)
-        {
-            return enableHeightVariation ? "Plains" : "Superflat";
-        }
-        return "Overworld";
+        // Simple plains biome - can be expanded for multiple biomes in the future
+        return "Plains";
     }
 
     private void AutoFindPlayer()
@@ -1168,41 +1098,27 @@ public class WorldGenerator : MonoBehaviour
     // Create chunk and generate data with small yields to avoid spikes
         var chunk = new WorldGeneration.Chunks.Chunk(coord, chunkSizeX, worldHeight, chunkSizeZ, _chunksRoot);
 
-        // Determine vertical budget for this chunk. With height variation we scan columns to find the max top.
-        int stone = Mathf.Max(0, flatStoneLayers);
-        int dirt = Mathf.Max(0, flatDirtLayers);
-        int grass = Mathf.Max(0, flatGrassLayers);
-        int baseTop = stone + dirt + grass - 1;
-        int usefulY;
-        if (enableHeightVariation && heightVariation > 0)
+        // Determine vertical budget for this chunk by scanning surface heights
+        int maxTop = 0;
+        for (int lx = 0; lx < chunkSizeX; lx++)
         {
-            int maxTop = 0;
-            for (int lx = 0; lx < chunkSizeX; lx++)
+            int worldX = coord.x * chunkSizeX + lx;
+            for (int lz = 0; lz < chunkSizeZ; lz++)
             {
-                int worldX = coord.x * chunkSizeX + lx;
-                for (int lz = 0; lz < chunkSizeZ; lz++)
-                {
-                    int worldZ = coord.y * chunkSizeZ + lz;
-                    int top = GetColumnTopY(worldX, worldZ, stone, dirt, grass, baseTop);
-                    if (top > maxTop) maxTop = top;
-                }
+                int worldZ = coord.y * chunkSizeZ + lz;
+                int top = GetColumnTopY(worldX, worldZ);
+                if (top > maxTop) maxTop = top;
             }
-            usefulY = Mathf.Min(worldHeight, maxTop + 1); // +1 because top is zero-based
         }
-        else
-        {
-            usefulY = Mathf.Min(worldHeight, baseTop + 1);
-        }
+        int usefulY = Mathf.Min(worldHeight, maxTop + 1); // +1 because top is zero-based
         usefulY = Mathf.Max(1, usefulY);
 
         for (int lx = 0; lx < chunkSizeX; lx++)
         {
             for (int lz = 0; lz < chunkSizeZ; lz++)
             {
-                // Column-specific top to avoid iterating unnecessary upper air cells when variation enabled
-                int columnTop = enableHeightVariation && heightVariation > 0
-                    ? GetColumnTopY(coord.x * chunkSizeX + lx, coord.y * chunkSizeZ + lz, stone, dirt, grass, baseTop)
-                    : (stone + dirt + grass - 1);
+                // Column-specific top to avoid iterating unnecessary upper air cells
+                int columnTop = GetColumnTopY(coord.x * chunkSizeX + lx, coord.y * chunkSizeZ + lz);
                 int columnMaxY = Mathf.Min(worldHeight - 1, columnTop);
                 for (int ly = 0; ly <= columnMaxY; ly++)
                 {
@@ -1939,11 +1855,11 @@ public class WorldGenerator : MonoBehaviour
             {
         // Periodically yield to keep frame time responsive
         if ((workCounter++ & 31) == 0) yield return null;
-                // Density modulation using terrain noise at cell center
+                // Density modulation using simple terrain noise at cell center
                 int cx = gx + grid / 2;
                 int cz = gz + grid / 2;
-                float baseNoise = EvaluateHeightNoise(cx, cz); // [-1,1]
-                float densityScale = Mathf.Clamp01(0.6f + 0.4f * (baseNoise * 0.5f + 0.5f));
+                float baseNoise = Mathf.PerlinNoise((cx + worldSeed) * 0.01f, (cz + worldSeed) * 0.01f); // [0,1]
+                float densityScale = Mathf.Clamp01(0.6f + 0.4f * baseNoise);
                 // Expected trees per block
                 float densityPerBlock = (treesPerChunk <= 0f || chunk.sizeX <= 0 || chunk.sizeZ <= 0)
                     ? 0f
@@ -2404,16 +2320,8 @@ public class WorldGenerator : MonoBehaviour
             if (GetBlockType(new Vector3Int(x, y, z)) != BlockType.Air)
                 return y;
         }
-        // Fallback to superflat ground if none found
-        if (generateSuperflat)
-        {
-            int stone = Mathf.Max(0, flatStoneLayers);
-            int dirt = Mathf.Max(0, flatDirtLayers);
-            int grass = Mathf.Max(0, flatGrassLayers);
-            int totalLayers = Mathf.Min(worldHeight, stone + dirt + grass);
-            return totalLayers - 1;
-        }
-        return -1;
+        // Fallback to estimated surface height if none found
+        return GetColumnTopY(x, z);
     }
 
     // Build batched plants for a meshed chunk to keep loads lightweight

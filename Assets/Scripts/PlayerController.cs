@@ -14,8 +14,7 @@ public class PlayerController : MonoBehaviour
     // Movement state
     private Vector3 velocity; private float xRotation = 0f; private bool isSprinting; private bool isCrouching; private float currentSpeed; private float baseFOV; private float targetHeight;
 
-    // Target highlight
-    private GameObject highlightCube; private Vector3Int currentTargetCell = new Vector3Int(int.MinValue,int.MinValue,int.MinValue); private BlockType currentTargetType = BlockType.Air;
+    // Target highlight removed
 
     void Start()
     {
@@ -23,13 +22,10 @@ public class PlayerController : MonoBehaviour
         playerCamera = GetComponentInChildren<Camera>();
         worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
         playerInventory = GetComponent<PlayerInventory>() ?? gameObject.AddComponent<PlayerInventory>();
-        baseFOV = playerCamera.fieldOfView; targetHeight = standHeight; currentSpeed = walkSpeed; Cursor.lockState = CursorLockMode.Locked; SetupHighlight();
+        baseFOV = playerCamera.fieldOfView; targetHeight = standHeight; currentSpeed = walkSpeed; Cursor.lockState = CursorLockMode.Locked;
     }
 
-    void Update()
-    {
-        HandleMouseLook(); HandleMovementState(); HandleMovement(); HandleInteraction(); UpdateCrouchHeight(); UpdateSprintFOV(); UpdateTargetHighlight();
-    }
+    // Update method moved below to include dropped item hover checking
 
     void HandleMouseLook()
     {
@@ -60,14 +56,115 @@ public class PlayerController : MonoBehaviour
     { float targetFOV = isSprinting ? baseFOV + sprintFOVIncrease : baseFOV; playerCamera.fieldOfView = Mathf.Lerp(playerCamera.fieldOfView,targetFOV,Time.deltaTime * fovTransitionSpeed); }
 
     void HandleInteraction()
-    { if (Input.GetMouseButtonDown(0)) BreakBlock(); if (Input.GetMouseButtonDown(1)) PlaceBlock(); }
+    { 
+        // Mining is now handled by MiningSystem component - no more instant breaking
+        // Handle right-click for block placement with dropped item priority
+        if (Input.GetMouseButtonDown(1))
+        {
+            Debug.Log("PlayerController: Right-click detected");
+            
+            // First check if we're clicking on a dropped item
+            if (TryPickupDroppedItem())
+            {
+                Debug.Log("PlayerController: Picked up dropped item, skipping block placement");
+                return;
+            }
+            
+            // If no dropped item was clicked, place a block
+            Debug.Log("PlayerController: No dropped item clicked, placing block");
+            PlaceBlock();
+        }
+    }
+    
+    private bool TryPickupDroppedItem()
+    {
+        Ray ray = playerCamera.ScreenPointToRay(new Vector3(Screen.width/2, Screen.height/2, 0));
+        RaycastHit[] hits = Physics.RaycastAll(ray, interactionRange);
+        
+        Debug.Log($"PlayerController: Checking {hits.Length} raycast hits for dropped items");
+        
+        // Sort hits by distance (closest first)
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+        
+        foreach (RaycastHit hit in hits)
+        {
+            DroppedItem droppedItem = hit.collider.GetComponent<DroppedItem>();
+            if (droppedItem != null && !droppedItem.isBeingPickedUp)
+            {
+                Debug.Log($"PlayerController: Found dropped item {droppedItem.itemType} at distance {hit.distance}");
+                droppedItem.TryPickup();
+                return true;
+            }
+        }
+        
+        Debug.Log("PlayerController: No dropped items found in raycast");
+        return false;
+    }
+    
+    // Add hover checking for dropped items
+    void Update()
+    {
+        HandleMouseLook(); HandleMovementState(); HandleMovement(); HandleInteraction(); UpdateCrouchHeight(); UpdateSprintFOV();
+        
+        // Check for dropped item hover every frame
+        CheckDroppedItemHover();
+    }
+    
+    private void CheckDroppedItemHover()
+    {
+        Ray ray = playerCamera.ScreenPointToRay(new Vector3(Screen.width/2, Screen.height/2, 0));
+        RaycastHit[] hits = Physics.RaycastAll(ray, interactionRange);
+        
+        // Find the closest dropped item being looked at
+        DroppedItem closestDroppedItem = null;
+        float closestDistance = float.MaxValue;
+        
+        foreach (RaycastHit hit in hits)
+        {
+            DroppedItem droppedItem = hit.collider.GetComponent<DroppedItem>();
+            if (droppedItem != null && !droppedItem.isBeingPickedUp && hit.distance < closestDistance)
+            {
+                closestDroppedItem = droppedItem;
+                closestDistance = hit.distance;
+            }
+        }
+        
+        // Reset all dropped items hover state first, then set the closest one
+        DroppedItem[] allDroppedItems = FindObjectsByType<DroppedItem>(FindObjectsSortMode.None);
+        foreach (DroppedItem item in allDroppedItems)
+        {
+            bool shouldBeHovered = (item == closestDroppedItem);
+            if (item.isHovered != shouldBeHovered)
+            {
+                if (shouldBeHovered)
+                {
+                    Debug.Log($"PlayerController: Setting {item.itemType} to hovered");
+                }
+                else
+                {
+                    Debug.Log($"PlayerController: Removing hover from {item.itemType}");
+                }
+                item.SetHovered(shouldBeHovered);
+            }
+        }
+    }
+    
+    public void PlaceBlockFromInteractionManager(Ray ray)
+    {
+        PlaceBlock(); // Use existing block placement logic
+    }
 
     void BreakBlock()
     {
         // Remove plant first if cursor hits a plant cell
         if (TryRemovePlant()) return;
         if (AcquireTargetCell(out var cell,out var type))
-    { BlockType drop = (type == BlockType.Grass && grassDropsDirt) ? BlockType.Dirt : type; worldGenerator.PlaceBlock(cell, BlockType.Air); playerInventory?.AddBlock(drop,1); currentTargetType = BlockType.Air; return; }
+    { 
+        BlockType drop = (type == BlockType.Grass && grassDropsDirt) ? BlockType.Dirt : type; 
+        worldGenerator.PlaceBlock(cell, BlockType.Air); 
+        playerInventory?.AddBlock(drop,1); 
+        return; 
+    }
     }
 
     bool TryRemovePlant()
@@ -87,23 +184,92 @@ public class PlayerController : MonoBehaviour
 
     void PlaceBlock()
     {
-        if (playerInventory == null) return; if (!playerInventory.HasBlockForPlacement(out BlockType placeType)) return; Ray ray = playerCamera.ScreenPointToRay(new Vector3(Screen.width/2,Screen.height/2,0));
+        Debug.Log("PlayerController: PlaceBlock called");
+        
+        if (playerInventory == null) 
+        {
+            Debug.Log("PlayerController: No playerInventory found");
+            return; 
+        }
+        
+        if (!playerInventory.HasBlockForPlacement(out BlockType placeType)) 
+        {
+            Debug.Log("PlayerController: No block available for placement");
+            return; 
+        }
+        
+        Debug.Log($"PlayerController: Attempting to place {placeType}");
+        
+        Ray ray = playerCamera.ScreenPointToRay(new Vector3(Screen.width/2,Screen.height/2,0));
         if (worldGenerator != null && worldGenerator.useChunkStreaming && worldGenerator.useChunkMeshing)
-        { Vector3Int hitCell, placeCell; Vector3 hitNormal; if (worldGenerator.TryVoxelRaycast(ray, interactionRange, out hitCell, out placeCell, out hitNormal)) { Vector3Int pos = placeCell; if (characterController){ Bounds bb = new Bounds((Vector3)pos, Vector3.one); if (bb.Intersects(characterController.bounds)) return; } if (worldGenerator.GetBlockType(pos) == BlockType.Air){ worldGenerator.PlaceBlock(pos, placeType); playerInventory.ConsumeOneFromSelected(); } return; } }
+        { 
+            Debug.Log("PlayerController: Using voxel raycast for block placement");
+            Vector3Int hitCell, placeCell; Vector3 hitNormal; 
+            if (worldGenerator.TryVoxelRaycast(ray, interactionRange, out hitCell, out placeCell, out hitNormal)) 
+            { 
+                Vector3Int pos = placeCell; 
+                Debug.Log($"PlayerController: Voxel raycast hit, placing at {pos}");
+                if (characterController){ Bounds bb = new Bounds((Vector3)pos, Vector3.one); if (bb.Intersects(characterController.bounds)) { Debug.Log("PlayerController: Cannot place - intersects player bounds"); return; } } 
+                if (worldGenerator.GetBlockType(pos) == BlockType.Air)
+                { 
+                    Debug.Log($"PlayerController: Placing {placeType} at {pos}");
+                    worldGenerator.PlaceBlock(pos, placeType); 
+                    playerInventory.ConsumeOneFromSelected(); 
+                } 
+                else
+                {
+                    Debug.Log($"PlayerController: Cannot place - position occupied by {worldGenerator.GetBlockType(pos)}");
+                }
+                return; 
+            } 
+            else
+            {
+                Debug.Log("PlayerController: Voxel raycast missed");
+            }
+        }
         // Physics fallback (plants / colliders)
+        Debug.Log("PlayerController: Trying physics raycast fallback");
         if (Physics.Raycast(ray, out RaycastHit hit, interactionRange, blockLayerMask))
-        { Vector3Int pos; BlockInfo bi = hit.collider.GetComponent<BlockInfo>(); if (bi != null){ Vector3 hp = hit.point + hit.normal*0.5f; pos = Vector3Int.RoundToInt(hp); } else { pos = Vector3Int.RoundToInt(hit.collider.bounds.center); } if (characterController){ Bounds bb = new Bounds((Vector3)pos,Vector3.one); if (bb.Intersects(characterController.bounds)) return; } if (worldGenerator != null && worldGenerator.GetBlockType(pos) == BlockType.Air){ worldGenerator.PlaceBlock(pos, placeType); playerInventory.ConsumeOneFromSelected(); } }
+        { 
+            Debug.Log($"PlayerController: Physics raycast hit {hit.collider.name}");
+            Vector3Int pos; 
+            BlockInfo bi = hit.collider.GetComponent<BlockInfo>(); 
+            if (bi != null)
+            { 
+                Vector3 hp = hit.point + hit.normal*0.5f; 
+                pos = Vector3Int.RoundToInt(hp); 
+            } 
+            else 
+            { 
+                pos = Vector3Int.RoundToInt(hit.collider.bounds.center); 
+            } 
+            if (characterController)
+            { 
+                Bounds bb = new Bounds((Vector3)pos,Vector3.one); 
+                if (bb.Intersects(characterController.bounds)) 
+                {
+                    Debug.Log("PlayerController: Physics fallback - Cannot place, intersects player bounds");
+                    return; 
+                }
+            } 
+            if (worldGenerator != null && worldGenerator.GetBlockType(pos) == BlockType.Air)
+            { 
+                Debug.Log($"PlayerController: Physics fallback - Placing {placeType} at {pos}");
+                worldGenerator.PlaceBlock(pos, placeType); 
+                playerInventory.ConsumeOneFromSelected(); 
+            }
+            else
+            {
+                Debug.Log($"PlayerController: Physics fallback - Cannot place, position occupied by {worldGenerator?.GetBlockType(pos)}");
+            }
+        }
+        else
+        {
+            Debug.Log("PlayerController: Physics raycast fallback missed");
+        }
     }
 
-    void SetupHighlight()
-    {
-        highlightCube = GameObject.CreatePrimitive(PrimitiveType.Cube); highlightCube.name = "BlockHighlight"; var col = highlightCube.GetComponent<Collider>(); if (col) Destroy(col); var mr = highlightCube.GetComponent<MeshRenderer>(); Shader sh = Shader.Find("Universal Render Pipeline/Unlit"); if (sh==null) sh = Shader.Find("Unlit/Color"); var mat = new Material(sh){color=new Color(0f,1f,0f,0.25f)}; mat.SetInt("_SrcBlend",(int)UnityEngine.Rendering.BlendMode.SrcAlpha); mat.SetInt("_DstBlend",(int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha); mat.SetInt("_ZWrite",0); mr.material = mat; highlightCube.transform.localScale = Vector3.one * 1.001f; highlightCube.SetActive(false);
-    }
-
-    void UpdateTargetHighlight()
-    {
-        if (worldGenerator == null || highlightCube == null) return; if (AcquireTargetCell(out var cell, out var type)){ if (cell != currentTargetCell || type != currentTargetType){ currentTargetCell = cell; currentTargetType = type; highlightCube.transform.position = cell + Vector3.one*0.5f; } if (!highlightCube.activeSelf) highlightCube.SetActive(true); } else { if (highlightCube.activeSelf) highlightCube.SetActive(false); currentTargetCell = new Vector3Int(int.MinValue,int.MinValue,int.MinValue); currentTargetType = BlockType.Air; }
-    }
+    // Block highlighting system removed
 
     // Public getters
     public bool IsSprinting() => isSprinting; public bool IsCrouching() => isCrouching; public float GetCurrentSpeed() => currentSpeed;

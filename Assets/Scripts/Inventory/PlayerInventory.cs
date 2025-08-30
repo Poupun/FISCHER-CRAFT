@@ -41,7 +41,14 @@ public class PlayerInventory : MonoBehaviour
 
     public bool AddBlock(BlockType type, int amount = 1)
     {
-        if (type == BlockType.Air || amount <= 0) return false;
+        Debug.Log($"PlayerInventory.AddBlock: Called with {type} x{amount}");
+        
+        if (type == BlockType.Air || amount <= 0) 
+        {
+            Debug.Log($"PlayerInventory.AddBlock: Invalid type ({type}) or amount ({amount})");
+            return false;
+        }
+        
         int originalAmount = amount;
         
         // First pass: existing stacks of same type in hotbar
@@ -92,8 +99,11 @@ public class PlayerInventory : MonoBehaviour
             }
         }
         
+        bool fullyAdded = (amount == 0);
+        Debug.Log($"PlayerInventory.AddBlock: Result - added {originalAmount - amount}/{originalAmount}, fully added: {fullyAdded}");
+        
         if (originalAmount != amount) OnInventoryChanged?.Invoke();
-        return amount == 0; // true if fully added
+        return fullyAdded; // true if fully added
     }
 
     public bool HasBlockForPlacement(out BlockType type)
@@ -219,5 +229,63 @@ public class PlayerInventory : MonoBehaviour
     public int GetTotalSlotCount()
     {
         return hotbarSize + mainInventorySize;
+    }
+
+    public ItemStack GetSelectedItem()
+    {
+        if (selectedIndex >= 0 && selectedIndex < hotbar.Length)
+        {
+            return hotbar[selectedIndex];
+        }
+        return new ItemStack { blockType = BlockType.Air, count = 0 };
+    }
+
+    public bool AddItem(BlockType blockType, int quantity = 1)
+    {
+        return AddBlock(blockType, quantity);
+    }
+
+    public bool RemoveItem(BlockType blockType, int quantity = 1)
+    {
+        if (blockType == BlockType.Air || quantity <= 0) return false;
+        
+        int remaining = quantity;
+        
+        // First check hotbar
+        for (int i = 0; i < hotbar.Length && remaining > 0; i++)
+        {
+            if (hotbar[i].blockType == blockType)
+            {
+                int toRemove = Mathf.Min(hotbar[i].count, remaining);
+                hotbar[i].count -= toRemove;
+                remaining -= toRemove;
+                
+                if (hotbar[i].count <= 0)
+                {
+                    hotbar[i].blockType = BlockType.Air;
+                    hotbar[i].count = 0;
+                }
+            }
+        }
+        
+        // Then check main inventory
+        for (int i = 0; i < mainInventory.Length && remaining > 0; i++)
+        {
+            if (mainInventory[i].blockType == blockType)
+            {
+                int toRemove = Mathf.Min(mainInventory[i].count, remaining);
+                mainInventory[i].count -= toRemove;
+                remaining -= toRemove;
+                
+                if (mainInventory[i].count <= 0)
+                {
+                    mainInventory[i].blockType = BlockType.Air;
+                    mainInventory[i].count = 0;
+                }
+            }
+        }
+        
+        if (remaining != quantity) OnInventoryChanged?.Invoke();
+        return remaining == 0; // true if fully removed
     }
 }
