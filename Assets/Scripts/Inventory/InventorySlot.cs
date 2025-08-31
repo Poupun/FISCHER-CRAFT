@@ -3,7 +3,7 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using TMPro;
 
-public class InventorySlot : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IDropHandler, IPointerClickHandler
+public class InventorySlot : MonoBehaviour, IPointerClickHandler
 {
     [Header("UI Components")]
     public Image background;
@@ -18,11 +18,33 @@ public class InventorySlot : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
     private PlayerInventory inventory;
     private ItemStack currentStack;
     private Canvas parentCanvas;
-    private static InventorySlot draggedSlot;
-    private static GameObject dragPreview;
     
     void Start()
     {
+        // Auto-assign UI components if they're not set
+        if (background == null)
+        {
+            var backgroundChild = transform.Find("Background");
+            if (backgroundChild != null)
+                background = backgroundChild.GetComponent<Image>();
+            else
+                background = GetComponent<Image>(); // Fallback to self
+        }
+        
+        if (icon == null)
+        {
+            var iconChild = transform.Find("Icon");
+            if (iconChild != null)
+                icon = iconChild.GetComponent<Image>();
+        }
+        
+        if (countText == null)
+        {
+            var countChild = transform.Find("Count");
+            if (countChild != null)
+                countText = countChild.GetComponent<TextMeshProUGUI>();
+        }
+        
         if (inventory == null)
             inventory = FindFirstObjectByType<PlayerInventory>();
             
@@ -118,6 +140,7 @@ public class InventorySlot : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
                     case BlockType.Coal: tex = worldGenerator.coalTexture; break;
                     case BlockType.Log: tex = worldGenerator.logTexture; break;
                     case BlockType.Leaves: tex = worldGenerator.leavesTexture; break;
+                    case BlockType.WoodPlanks: tex = worldGenerator.woodPlanksTexture; break;
                 }
             }
         }
@@ -131,82 +154,334 @@ public class InventorySlot : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
     {
         if (inventory == null) return;
         
-        if (inventory.IsHotbarSlot(slotIndex))
+        // Handle crafting result slot specially
+        if (slotIndex == 40) // Result slot
+        {
+            HandleResultSlotClick(eventData);
+            return;
+        }
+        
+        // Handle regular inventory interactions first (picking up/placing items)
+        if (!currentStack.IsEmpty || InventoryCursor.HasItem())
+        {
+            HandleInventoryClick(eventData);
+            return;
+        }
+        
+        // Handle hotbar selection only for empty hotbar slots when cursor is empty
+        if (inventory.IsHotbarSlot(slotIndex) && currentStack.IsEmpty && !InventoryCursor.HasItem())
         {
             inventory.SetSelectedIndex(slotIndex);
+            return;
         }
     }
     
-    public void OnBeginDrag(PointerEventData eventData)
+    void HandleResultSlotClick(PointerEventData eventData)
     {
-        if (currentStack.IsEmpty) return;
+        var craftingManager = FindFirstObjectByType<CraftingManager>();
+        if (craftingManager == null || currentStack.IsEmpty) return;
         
-        draggedSlot = this;
-        CreateDragPreview();
+        if (eventData.button == PointerEventData.InputButton.Left)
+        {
+            // Left click: pick up result items to cursor (simple approach for now)
+            if (!InventoryCursor.HasItem())
+            {
+                // For now, let the existing TryCollectResult add to inventory
+                // This maintains the current working behavior
+                craftingManager.TryCollectResult();
+            }
+        }
+        // Right click not supported on result slot
     }
     
-    public void OnDrag(PointerEventData eventData)
+    void HandleInventoryClick(PointerEventData eventData)
     {
-        if (dragPreview != null)
+        bool isShiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+        
+        if (isShiftHeld && eventData.button == PointerEventData.InputButton.Left)
         {
-            Vector2 position;
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                parentCanvas.transform as RectTransform,
-                eventData.position,
-                parentCanvas.worldCamera,
-                out position);
-            dragPreview.transform.position = parentCanvas.transform.TransformPoint(position);
+            // Shift + Left Click: Quick transfer to appropriate inventory section
+            HandleQuickTransfer();
+            return;
+        }
+        
+        if (eventData.button == PointerEventData.InputButton.Left)
+        {
+            HandleLeftClick();
+        }
+        else if (eventData.button == PointerEventData.InputButton.Right)
+        {
+            HandleRightClick();
         }
     }
     
-    public void OnEndDrag(PointerEventData eventData)
+    void HandleLeftClick()
     {
-        DestroyDragPreview();
-        draggedSlot = null;
+        var cursorStack = InventoryCursor.GetCursorStack();
+        
+        if (!InventoryCursor.HasItem())
+        {
+            // Pick up entire stack
+            if (!currentStack.IsEmpty)
+            {
+                InventoryCursor.SetCursorStack(currentStack);
+                inventory.SetSlot(slotIndex, new ItemStack());
+                
+                // Trigger pickup animation from this slot's position to mouse
+                CursorDisplay.StartPickupAnimation(transform.position);
+            }
+        }
+        else
+        {
+            // Place entire cursor stack
+            if (currentStack.IsEmpty)
+            {
+                // Empty slot - place all cursor items
+                inventory.SetSlot(slotIndex, cursorStack);
+                InventoryCursor.Clear();
+            }
+            else if (currentStack.blockType == cursorStack.blockType)
+            {
+                // Same type - try to merge stacks
+                int spaceAvailable = ItemStack.MaxStackSize - currentStack.count;
+                int toAdd = Mathf.Min(spaceAvailable, cursorStack.count);
+                
+                if (toAdd > 0)
+                {
+                    inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count + toAdd));
+                    
+                    if (cursorStack.count <= toAdd)
+                    {
+                        InventoryCursor.Clear();
+                    }
+                    else
+                    {
+                        InventoryCursor.SetCursorStack(new ItemStack(cursorStack.blockType, cursorStack.count - toAdd));
+                    }
+                }
+            }
+            else
+            {
+                // Different types - swap stacks
+                inventory.SetSlot(slotIndex, cursorStack);
+                InventoryCursor.SetCursorStack(currentStack);
+            }
+        }
     }
     
-    public void OnDrop(PointerEventData eventData)
+    void HandleRightClick()
     {
-        if (draggedSlot != null && draggedSlot != this && inventory != null)
+        var cursorStack = InventoryCursor.GetCursorStack();
+        
+        if (!InventoryCursor.HasItem())
         {
-            if (eventData.button == PointerEventData.InputButton.Left)
+            // Pick up half stack (or split stack)
+            if (!currentStack.IsEmpty && currentStack.count > 1)
             {
-                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+                int halfCount = Mathf.CeilToInt(currentStack.count / 2f);
+                InventoryCursor.SetCursorStack(new ItemStack(currentStack.blockType, halfCount));
+                inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - halfCount));
+                
+                // Trigger pickup animation from this slot's position to mouse
+                CursorDisplay.StartPickupAnimation(transform.position);
+            }
+            else if (!currentStack.IsEmpty)
+            {
+                // Single item - pick it up
+                InventoryCursor.SetCursorStack(currentStack);
+                inventory.SetSlot(slotIndex, new ItemStack());
+                
+                // Trigger pickup animation from this slot's position to mouse
+                CursorDisplay.StartPickupAnimation(transform.position);
+            }
+        }
+        else
+        {
+            // Place single item from cursor
+            if (currentStack.IsEmpty)
+            {
+                // Empty slot - place one item
+                inventory.SetSlot(slotIndex, new ItemStack(cursorStack.blockType, 1));
+                
+                if (cursorStack.count <= 1)
                 {
-                    inventory.TryMergeSlots(draggedSlot.slotIndex, this.slotIndex);
+                    InventoryCursor.Clear();
                 }
                 else
                 {
-                    inventory.SwapSlots(draggedSlot.slotIndex, this.slotIndex);
+                    InventoryCursor.SetCursorStack(new ItemStack(cursorStack.blockType, cursorStack.count - 1));
+                }
+            }
+            else if (currentStack.blockType == cursorStack.blockType)
+            {
+                // Same type - add one if space available
+                if (currentStack.count < ItemStack.MaxStackSize)
+                {
+                    inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count + 1));
+                    
+                    if (cursorStack.count <= 1)
+                    {
+                        InventoryCursor.Clear();
+                    }
+                    else
+                    {
+                        InventoryCursor.SetCursorStack(new ItemStack(cursorStack.blockType, cursorStack.count - 1));
+                    }
                 }
             }
         }
     }
     
-    void CreateDragPreview()
+    void HandleQuickTransfer()
     {
-        if (parentCanvas == null) return;
+        if (currentStack.IsEmpty) return;
         
-        dragPreview = new GameObject("DragPreview");
-        dragPreview.transform.SetParent(parentCanvas.transform, false);
-        
-        var image = dragPreview.AddComponent<Image>();
-        image.sprite = icon.sprite;
-        image.color = new Color(1, 1, 1, 0.8f);
-        image.raycastTarget = false;
-        
-        var rectTransform = dragPreview.GetComponent<RectTransform>();
-        rectTransform.sizeDelta = icon.rectTransform.sizeDelta;
-        
-        dragPreview.transform.SetAsLastSibling();
-    }
-    
-    void DestroyDragPreview()
-    {
-        if (dragPreview != null)
+        // Determine target inventory section based on current slot
+        if (inventory.IsHotbarSlot(slotIndex))
         {
-            Destroy(dragPreview);
-            dragPreview = null;
+            // From hotbar -> try main inventory first, then crafting
+            if (!TryTransferToMainInventory()) TryTransferToCrafting();
+        }
+        else if (inventory.IsCraftingSlot(slotIndex))
+        {
+            // From crafting -> try hotbar first, then main inventory
+            if (!TryTransferToHotbar()) TryTransferToMainInventory();
+        }
+        else
+        {
+            // From main inventory -> try hotbar first, then crafting
+            if (!TryTransferToHotbar()) TryTransferToCrafting();
         }
     }
+    
+    bool TryTransferToHotbar()
+    {
+        // Try to merge with existing stacks first
+        for (int i = 0; i < inventory.hotbar.Length; i++)
+        {
+            var hotbarStack = inventory.hotbar[i];
+            if (!hotbarStack.IsEmpty && hotbarStack.blockType == currentStack.blockType)
+            {
+                int spaceAvailable = ItemStack.MaxStackSize - hotbarStack.count;
+                if (spaceAvailable > 0)
+                {
+                    int toTransfer = Mathf.Min(spaceAvailable, currentStack.count);
+                    inventory.SetSlot(i, new ItemStack(hotbarStack.blockType, hotbarStack.count + toTransfer));
+                    
+                    if (currentStack.count <= toTransfer)
+                    {
+                        inventory.SetSlot(slotIndex, new ItemStack());
+                        return true;
+                    }
+                    else
+                    {
+                        inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - toTransfer));
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // Try to find empty slot
+        for (int i = 0; i < inventory.hotbar.Length; i++)
+        {
+            if (inventory.hotbar[i].IsEmpty)
+            {
+                inventory.SetSlot(i, currentStack);
+                inventory.SetSlot(slotIndex, new ItemStack());
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    bool TryTransferToMainInventory()
+    {
+        // Try to merge with existing stacks first
+        for (int i = inventory.hotbar.Length; i < inventory.mainInventorySize; i++)
+        {
+            var mainStack = inventory.GetSlot(i);
+            if (!mainStack.IsEmpty && mainStack.blockType == currentStack.blockType)
+            {
+                int spaceAvailable = ItemStack.MaxStackSize - mainStack.count;
+                if (spaceAvailable > 0)
+                {
+                    int toTransfer = Mathf.Min(spaceAvailable, currentStack.count);
+                    inventory.SetSlot(i, new ItemStack(mainStack.blockType, mainStack.count + toTransfer));
+                    
+                    if (currentStack.count <= toTransfer)
+                    {
+                        inventory.SetSlot(slotIndex, new ItemStack());
+                        return true;
+                    }
+                    else
+                    {
+                        inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - toTransfer));
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // Try to find empty slot
+        for (int i = inventory.hotbar.Length; i < inventory.mainInventorySize; i++)
+        {
+            var mainStack = inventory.GetSlot(i);
+            if (mainStack.IsEmpty)
+            {
+                inventory.SetSlot(i, currentStack);
+                inventory.SetSlot(slotIndex, new ItemStack());
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    bool TryTransferToCrafting()
+    {
+        // Only transfer to crafting input slots (36-39), not result slot (40)
+        for (int i = 36; i < 40; i++)
+        {
+            var craftingStack = inventory.GetSlot(i);
+            if (!craftingStack.IsEmpty && craftingStack.blockType == currentStack.blockType)
+            {
+                int spaceAvailable = ItemStack.MaxStackSize - craftingStack.count;
+                if (spaceAvailable > 0)
+                {
+                    int toTransfer = Mathf.Min(spaceAvailable, currentStack.count);
+                    inventory.SetSlot(i, new ItemStack(craftingStack.blockType, craftingStack.count + toTransfer));
+                    
+                    if (currentStack.count <= toTransfer)
+                    {
+                        inventory.SetSlot(slotIndex, new ItemStack());
+                        return true;
+                    }
+                    else
+                    {
+                        inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - toTransfer));
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // Try to find empty crafting slot
+        for (int i = 36; i < 40; i++)
+        {
+            var craftingStack = inventory.GetSlot(i);
+            if (craftingStack.IsEmpty)
+            {
+                inventory.SetSlot(i, currentStack);
+                inventory.SetSlot(slotIndex, new ItemStack());
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    // Minecraft-style click-based inventory system
+    // First click picks up items to cursor, second click places them
 }

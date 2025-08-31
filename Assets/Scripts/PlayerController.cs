@@ -6,7 +6,12 @@ public class PlayerController : MonoBehaviour
     [Header("Sprint Settings")] public KeyCode sprintKey = KeyCode.LeftShift; public float sprintFOVIncrease = 10f; public float fovTransitionSpeed = 8f;
     [Header("Crouch Settings")] public KeyCode crouchKey = KeyCode.LeftControl; public float crouchHeight = 1.3f; public float standHeight = 1.8f; public float crouchTransitionSpeed = 10f;
     [Header("Interaction")] public float interactionRange = 6f; public LayerMask blockLayerMask = -1;
-    [Header("Drops")] public bool grassDropsDirt = true; // if true, breaking grass gives dirt (Minecraft-like); otherwise drops grass block
+    [Header("Drops")] 
+    public bool grassDropsDirt = true; // if true, breaking grass gives dirt (Minecraft-like); otherwise drops grass block
+    [Header("Drop Settings")]
+    public KeyCode dropKey = KeyCode.Q; // Key to drop items (Q is Minecraft standard)
+    public float dropForce = 5f; // Force applied to dropped items
+    public Vector3 dropOffset = new Vector3(0, 0.5f, 1f); // Offset from player position to drop items
 
     // Components
     private CharacterController characterController; private Camera playerCamera; private WorldGenerator worldGenerator; private PlayerInventory playerInventory;
@@ -101,14 +106,128 @@ public class PlayerController : MonoBehaviour
         return false;
     }
     
+    private void HandleItemDrop()
+    {
+        // Handle drop input
+        if (Input.GetKeyDown(dropKey))
+        {
+            // Check if Ctrl is held for full stack drop
+            if (Input.GetKey(KeyCode.LeftControl))
+            {
+                DropEntireStack();
+            }
+            else
+            {
+                // Single item drop
+                DropItem(1);
+            }
+        }
+    }
+    
+    private void DropItem(int quantity = 1)
+    {
+        if (playerInventory == null)
+        {
+            Debug.Log("PlayerController: Cannot drop item - no inventory found");
+            return;
+        }
+        
+        ItemStack selectedItem = playerInventory.GetSelectedItem();
+        if (selectedItem.IsEmpty)
+        {
+            Debug.Log("PlayerController: Cannot drop item - no item selected");
+            return;
+        }
+        
+        // Clamp quantity to available amount
+        int actualQuantity = Mathf.Min(quantity, selectedItem.count);
+        
+        // Remove items from inventory
+        if (!playerInventory.DropSelectedItem(actualQuantity))
+        {
+            Debug.Log("PlayerController: Failed to remove items from inventory");
+            return;
+        }
+        
+        // Calculate drop position
+        Vector3 dropPosition = transform.position + transform.TransformDirection(dropOffset);
+        
+        // Create dropped item
+        GameObject droppedItemObject = DroppedItem.CreateDroppedItem(dropPosition, selectedItem.blockType, actualQuantity);
+        
+        // Add physics force to simulate throw - directly in camera direction
+        Rigidbody rb = droppedItemObject.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            // Use exact camera forward direction with slight upward component for arc
+            Vector3 throwDirection = (playerCamera.transform.forward + Vector3.up * 0.2f).normalized;
+            rb.AddForce(throwDirection * dropForce, ForceMode.VelocityChange);
+            
+            // Minimal angular velocity for natural rotation without randomness
+            rb.angularVelocity = playerCamera.transform.forward * 2f;
+        }
+        
+        Debug.Log($"PlayerController: Dropped {actualQuantity}x {selectedItem.blockType} at {dropPosition}");
+    }
+    
+    private void DropEntireStack()
+    {
+        if (playerInventory == null)
+        {
+            Debug.Log("PlayerController: Cannot drop stack - no inventory found");
+            return;
+        }
+        
+        ItemStack selectedItem = playerInventory.GetSelectedItem();
+        if (selectedItem.IsEmpty)
+        {
+            Debug.Log("PlayerController: Cannot drop stack - no item selected");
+            return;
+        }
+        
+        int quantity = selectedItem.count;
+        
+        // Remove entire stack from inventory
+        if (!playerInventory.DropSelectedStack())
+        {
+            Debug.Log("PlayerController: Failed to remove stack from inventory");
+            return;
+        }
+        
+        // Calculate drop position
+        Vector3 dropPosition = transform.position + transform.TransformDirection(dropOffset);
+        
+        // Create dropped item
+        GameObject droppedItemObject = DroppedItem.CreateDroppedItem(dropPosition, selectedItem.blockType, quantity);
+        
+        // Add physics force to simulate throw - directly in camera direction
+        Rigidbody rb = droppedItemObject.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            // Use exact camera forward direction with slight upward component for arc
+            Vector3 throwDirection = (playerCamera.transform.forward + Vector3.up * 0.2f).normalized;
+            rb.AddForce(throwDirection * dropForce, ForceMode.VelocityChange);
+            
+            // Minimal angular velocity for natural rotation without randomness
+            rb.angularVelocity = playerCamera.transform.forward * 2f;
+        }
+        
+        Debug.Log($"PlayerController: Dropped entire stack of {quantity}x {selectedItem.blockType} at {dropPosition}");
+    }
+    
     // Add hover checking for dropped items
     void Update()
     {
         HandleMouseLook(); HandleMovementState(); HandleMovement(); HandleInteraction(); UpdateCrouchHeight(); UpdateSprintFOV();
         
+        // Handle item dropping
+        HandleItemDrop();
+        
         // Check for dropped item hover every frame
         CheckDroppedItemHover();
     }
+    
+    private DroppedItem currentlyHoveredItem = null;
     
     private void CheckDroppedItemHover()
     {
@@ -129,23 +248,24 @@ public class PlayerController : MonoBehaviour
             }
         }
         
-        // Reset all dropped items hover state first, then set the closest one
-        DroppedItem[] allDroppedItems = FindObjectsByType<DroppedItem>(FindObjectsSortMode.None);
-        foreach (DroppedItem item in allDroppedItems)
+        // Only update if the hovered item changed to avoid expensive operations
+        if (currentlyHoveredItem != closestDroppedItem)
         {
-            bool shouldBeHovered = (item == closestDroppedItem);
-            if (item.isHovered != shouldBeHovered)
+            // Remove hover from previously hovered item
+            if (currentlyHoveredItem != null)
             {
-                if (shouldBeHovered)
-                {
-                    Debug.Log($"PlayerController: Setting {item.itemType} to hovered");
-                }
-                else
-                {
-                    Debug.Log($"PlayerController: Removing hover from {item.itemType}");
-                }
-                item.SetHovered(shouldBeHovered);
+                Debug.Log($"PlayerController: Removing hover from {currentlyHoveredItem.itemType}");
+                currentlyHoveredItem.SetHovered(false);
             }
+            
+            // Set hover on new item
+            if (closestDroppedItem != null)
+            {
+                Debug.Log($"PlayerController: Setting {closestDroppedItem.itemType} to hovered");
+                closestDroppedItem.SetHovered(true);
+            }
+            
+            currentlyHoveredItem = closestDroppedItem;
         }
     }
     

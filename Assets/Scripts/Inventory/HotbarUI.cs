@@ -259,6 +259,7 @@ public class HotbarUI : MonoBehaviour
                 case BlockType.Coal: tex = worldGenerator.coalTexture; break;
                 case BlockType.Log: tex = worldGenerator.logTexture; break;
                 case BlockType.Leaves: tex = worldGenerator.leavesTexture; break;
+                case BlockType.WoodPlanks: tex = worldGenerator.woodPlanksTexture; break;
             }
         }
         if (tex == null) { spriteCache[type] = null; return null; }

@@ -58,6 +58,7 @@ public class WorldGenerator : MonoBehaviour
     public Texture2D coalTexture;
     public Texture2D logTexture;
     public Texture2D leavesTexture;
+    public Texture2D woodPlanksTexture;
     public Texture2D bedrockTexture;
     public Texture2D gravelTexture;
     public Texture2D ironTexture;
@@ -741,10 +742,34 @@ public class WorldGenerator : MonoBehaviour
                 Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
                 
                 // Apply texture if available, otherwise use color
-                if (BlockDatabase.blockTypes[i].blockTexture != null)
+                Texture2D tex = BlockDatabase.blockTypes[i].blockTexture;
+                
+                // Fallback to WorldGenerator textures if BlockDatabase doesn't have it
+                if (tex == null)
                 {
-                    mat.mainTexture = BlockDatabase.blockTypes[i].blockTexture;
-                    mat.SetTexture("_BaseMap", BlockDatabase.blockTypes[i].blockTexture);
+                    var blockType = BlockDatabase.blockTypes[i].blockType;
+                    switch (blockType)
+                    {
+                        case BlockType.Grass: tex = grassTexture; break;
+                        case BlockType.Dirt: tex = dirtTexture; break;
+                        case BlockType.Stone: tex = stoneTexture; break;
+                        case BlockType.Sand: tex = sandTexture; break;
+                        case BlockType.Coal: tex = coalTexture; break;
+                        case BlockType.Log: tex = logTexture; break;
+                        case BlockType.Leaves: tex = leavesTexture; break;
+                        case BlockType.WoodPlanks: tex = woodPlanksTexture; break;
+                        case BlockType.Bedrock: tex = bedrockTexture; break;
+                        case BlockType.Gravel: tex = gravelTexture; break;
+                        case BlockType.Iron: tex = ironTexture; break;
+                        case BlockType.Gold: tex = goldTexture; break;
+                        case BlockType.Diamond: tex = diamondTexture; break;
+                    }
+                }
+                
+                if (tex != null)
+                {
+                    mat.mainTexture = tex;
+                    mat.SetTexture("_BaseMap", tex);
                     mat.color = Color.white; // Use white to show texture correctly
                 }
                 else

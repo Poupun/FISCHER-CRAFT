@@ -8,8 +8,12 @@ public class PlayerInventory : MonoBehaviour
     public int hotbarSize = 9;
     public int mainInventorySize = 27; // 3x9 grid like Minecraft
     
+    [Header("Crafting Settings")]
+    public int craftingSlots = 5; // 4 crafting + 1 result slot
+    
     public ItemStack[] hotbar;
     public ItemStack[] mainInventory;
+    public ItemStack[] craftingInventory; // For crafting slots
     public int selectedIndex = 0;
 
     public event Action OnInventoryChanged; // raised when contents or selection change
@@ -21,6 +25,7 @@ public class PlayerInventory : MonoBehaviour
         
         hotbar = new ItemStack[hotbarSize];
         mainInventory = new ItemStack[mainInventorySize];
+        craftingInventory = new ItemStack[craftingSlots];
         
         for (int i = 0; i < hotbar.Length; i++)
         {
@@ -30,6 +35,11 @@ public class PlayerInventory : MonoBehaviour
         for (int i = 0; i < mainInventory.Length; i++)
         {
             mainInventory[i] = new ItemStack { blockType = BlockType.Air, count = 0 };
+        }
+        
+        for (int i = 0; i < craftingInventory.Length; i++)
+        {
+            craftingInventory[i] = new ItemStack { blockType = BlockType.Air, count = 0 };
         }
         
         // Add some test items for development
@@ -156,6 +166,12 @@ public class PlayerInventory : MonoBehaviour
         return slotIndex >= hotbarSize && slotIndex < (hotbarSize + mainInventorySize);
     }
 
+    public bool IsCraftingSlot(int slotIndex)
+    {
+        int craftingStartIndex = hotbarSize + mainInventorySize;
+        return slotIndex >= craftingStartIndex && slotIndex < (craftingStartIndex + craftingSlots);
+    }
+
     public ItemStack GetSlot(int slotIndex)
     {
         if (IsHotbarSlot(slotIndex))
@@ -165,6 +181,11 @@ public class PlayerInventory : MonoBehaviour
         else if (IsMainInventorySlot(slotIndex))
         {
             return mainInventory[slotIndex - hotbarSize];
+        }
+        else if (IsCraftingSlot(slotIndex))
+        {
+            int craftingStartIndex = hotbarSize + mainInventorySize;
+            return craftingInventory[slotIndex - craftingStartIndex];
         }
         return new ItemStack { blockType = BlockType.Air, count = 0 };
     }
@@ -178,6 +199,11 @@ public class PlayerInventory : MonoBehaviour
         else if (IsMainInventorySlot(slotIndex))
         {
             mainInventory[slotIndex - hotbarSize] = stack;
+        }
+        else if (IsCraftingSlot(slotIndex))
+        {
+            int craftingStartIndex = hotbarSize + mainInventorySize;
+            craftingInventory[slotIndex - craftingStartIndex] = stack;
         }
         OnInventoryChanged?.Invoke();
     }
@@ -228,7 +254,7 @@ public class PlayerInventory : MonoBehaviour
 
     public int GetTotalSlotCount()
     {
-        return hotbarSize + mainInventorySize;
+        return hotbarSize + mainInventorySize + craftingSlots;
     }
 
     public ItemStack GetSelectedItem()
@@ -243,6 +269,56 @@ public class PlayerInventory : MonoBehaviour
     public bool AddItem(BlockType blockType, int quantity = 1)
     {
         return AddBlock(blockType, quantity);
+    }
+
+    /// <summary>
+    /// Drops a specified quantity of the currently selected item
+    /// </summary>
+    /// <param name="quantity">Number of items to drop (defaults to 1)</param>
+    /// <returns>True if items were successfully removed from inventory, false otherwise</returns>
+    public bool DropSelectedItem(int quantity = 1)
+    {
+        if (quantity <= 0) return false;
+        
+        ItemStack selectedItem = GetSelectedItem();
+        if (selectedItem.IsEmpty) return false;
+        
+        // Clamp quantity to available amount
+        int actualQuantity = Mathf.Min(quantity, selectedItem.count);
+        
+        // Remove items from selected slot
+        hotbar[selectedIndex].count -= actualQuantity;
+        if (hotbar[selectedIndex].count <= 0)
+        {
+            hotbar[selectedIndex].blockType = BlockType.Air;
+            hotbar[selectedIndex].count = 0;
+        }
+        
+        OnInventoryChanged?.Invoke();
+        
+        Debug.Log($"PlayerInventory: Dropped {actualQuantity}x {selectedItem.blockType} from slot {selectedIndex}");
+        return true;
+    }
+    
+    /// <summary>
+    /// Drops the entire stack of the currently selected item
+    /// </summary>
+    /// <returns>True if items were successfully removed from inventory, false otherwise</returns>
+    public bool DropSelectedStack()
+    {
+        ItemStack selectedItem = GetSelectedItem();
+        if (selectedItem.IsEmpty) return false;
+        
+        int quantity = selectedItem.count;
+        
+        // Clear the entire selected slot
+        hotbar[selectedIndex].blockType = BlockType.Air;
+        hotbar[selectedIndex].count = 0;
+        
+        OnInventoryChanged?.Invoke();
+        
+        Debug.Log($"PlayerInventory: Dropped entire stack of {quantity}x {selectedItem.blockType} from slot {selectedIndex}");
+        return true;
     }
 
     public bool RemoveItem(BlockType blockType, int quantity = 1)
