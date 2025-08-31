@@ -181,17 +181,96 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         var craftingManager = FindFirstObjectByType<CraftingManager>();
         if (craftingManager == null || currentStack.IsEmpty) return;
         
+        bool isShiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+        
         if (eventData.button == PointerEventData.InputButton.Left)
         {
-            // Left click: pick up result items to cursor (simple approach for now)
-            if (!InventoryCursor.HasItem())
+            if (isShiftHeld)
             {
-                // For now, let the existing TryCollectResult add to inventory
-                // This maintains the current working behavior
-                craftingManager.TryCollectResult();
+                // Shift + Left Click: Craft as many as possible and add to inventory
+                HandleShiftClickCrafting(craftingManager);
+            }
+            else if (!InventoryCursor.HasItem())
+            {
+                // Regular left click: pick up result items to cursor
+                InventoryCursor.SetCursorStack(new ItemStack(currentStack.blockType, currentStack.count));
+                
+                // Consume materials and clear result
+                craftingManager.ConsumeCraftingMaterials();
+                craftingManager.SetResultSlot(new ItemStack());
+                
+                // Check for new valid recipe after consuming materials
+                craftingManager.CheckForValidRecipe();
+                
+                // Trigger pickup animation
+                CursorDisplay.StartPickupAnimation(transform.position);
+            }
+            else if (InventoryCursor.HasItem() && InventoryCursor.GetCursorStack().blockType == currentStack.blockType)
+            {
+                // Left click with compatible items in cursor: stack more crafted items
+                HandleStackCrafting(craftingManager);
             }
         }
         // Right click not supported on result slot
+    }
+    
+    void HandleShiftClickCrafting(CraftingManager craftingManager)
+    {
+        // Craft as many as possible and add directly to inventory
+        int craftCount = 0;
+        int maxCrafts = 64; // Safety limit to prevent infinite loops
+        
+        while (craftCount < maxCrafts && !currentStack.IsEmpty && CanCraftMore(craftingManager))
+        {
+            // Try to add result to inventory
+            if (inventory.AddBlock(currentStack.blockType, currentStack.count))
+            {
+                // Successfully added to inventory, consume materials
+                craftingManager.ConsumeCraftingMaterials();
+                craftingManager.CheckForValidRecipe();
+                craftCount++;
+            }
+            else
+            {
+                // Inventory full, stop crafting
+                break;
+            }
+        }
+        
+        Debug.Log($"Shift-click crafted {craftCount} times");
+    }
+    
+    void HandleStackCrafting(CraftingManager craftingManager)
+    {
+        // Try to add more crafted items to cursor stack
+        var cursorStack = InventoryCursor.GetCursorStack();
+        int spaceAvailable = ItemStack.MaxStackSize - cursorStack.count;
+        int canAdd = Mathf.Min(spaceAvailable, currentStack.count);
+        
+        if (canAdd > 0)
+        {
+            // Add to cursor stack
+            InventoryCursor.SetCursorStack(new ItemStack(cursorStack.blockType, cursorStack.count + canAdd));
+            
+            // Consume materials and check for new recipe
+            craftingManager.ConsumeCraftingMaterials();
+            craftingManager.CheckForValidRecipe();
+        }
+    }
+    
+    bool CanCraftMore(CraftingManager craftingManager)
+    {
+        // Check if we have enough materials for another craft
+        // For the log->planks recipe, we need at least 1 log
+        for (int i = 0; i < 4; i++) // 4 crafting slots
+        {
+            var slot = craftingManager.GetCraftingSlot(i);
+            if (slot.blockType == BlockType.Log && slot.count > 0)
+            {
+                return true; // Found at least 1 log
+            }
+        }
+        return false;
     }
     
     void HandleInventoryClick(PointerEventData eventData)
@@ -263,8 +342,9 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
             else
             {
                 // Different types - swap stacks
+                var slotStackCopy = new ItemStack(currentStack.blockType, currentStack.count);
                 inventory.SetSlot(slotIndex, cursorStack);
-                InventoryCursor.SetCursorStack(currentStack);
+                InventoryCursor.SetCursorStack(slotStackCopy);
             }
         }
     }

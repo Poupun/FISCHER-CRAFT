@@ -38,7 +38,7 @@ public class CraftingManager : MonoBehaviour
         // This avoids compilation issues while we test the basic functionality
     }
     
-    void CheckForValidRecipe()
+    public void CheckForValidRecipe()
     {
         if (isUpdatingRecipe) return; // Prevent circular calls
         isUpdatingRecipe = true;
@@ -46,29 +46,29 @@ public class CraftingManager : MonoBehaviour
         BlockType[,] currentPattern = GetCurrentCraftingPattern();
         
         // Simple hardcoded recipe check: 1 log = 4 wood planks
-        bool hasLog = false;
+        bool hasValidRecipe = true;
         int logCount = 0;
         
+        // Check all slots for recipe validity
         for (int x = 0; x < 2; x++)
         {
             for (int y = 0; y < 2; y++)
             {
                 if (currentPattern[x, y] == BlockType.Log)
                 {
-                    hasLog = true;
                     logCount++;
                 }
                 else if (currentPattern[x, y] != BlockType.Air)
                 {
                     // If there's any other material, recipe doesn't match
-                    hasLog = false;
+                    hasValidRecipe = false;
                     break;
                 }
             }
-            if (!hasLog && logCount > 0) break; // Early exit if pattern doesn't match
+            if (!hasValidRecipe) break; // Exit outer loop if invalid
         }
         
-        if (hasLog && logCount == 1)
+        if (hasValidRecipe && logCount == 1)
         {
             currentResult = new ItemStack(BlockType.WoodPlanks, 4);
             SetResultSlot(currentResult);
@@ -151,7 +151,7 @@ public class CraftingManager : MonoBehaviour
         return false;
     }
     
-    void ConsumeCraftingMaterials()
+    public void ConsumeCraftingMaterials()
     {
         for (int i = 0; i < craftingSlotCount; i++)
         {

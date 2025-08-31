@@ -75,6 +75,13 @@ public class InventoryManager : MonoBehaviour
     {
         isInventoryOpen = false;
         
+        // Clear crafting grid when closing inventory
+        var craftingManager = FindFirstObjectByType<CraftingManager>();
+        if (craftingManager != null)
+        {
+            craftingManager.ClearCraftingGrid();
+        }
+        
         if (inventoryPanel != null)
             inventoryPanel.SetActive(false);
         

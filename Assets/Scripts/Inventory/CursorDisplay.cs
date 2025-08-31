@@ -30,17 +30,26 @@ public class CursorDisplay : MonoBehaviour
         originalScale = rectTransform.localScale;
         instance = this;
         
+        Debug.Log($"CursorDisplay: Started. Canvas: {canvas}, RectTransform: {rectTransform}, Instance set: {instance != null}, Icon: {icon}, CountText: {countText}");
+        
         // Initially hide the cursor display
         gameObject.SetActive(false);
     }
     
     void Update()
     {
+        // Debug: Check cursor state every few frames
+        if (Time.frameCount % 60 == 0) // Every 60 frames (~1 second at 60fps)
+        {
+            Debug.Log($"CursorDisplay Update: HasItem={InventoryCursor.HasItem()}, GameObject.active={gameObject.activeInHierarchy}, isAnimating={isAnimating}");
+        }
+        
         // Update cursor position to follow mouse
         if (InventoryCursor.HasItem())
         {
             if (!gameObject.activeInHierarchy)
             {
+                Debug.Log("CursorDisplay: Activating cursor display");
                 gameObject.SetActive(true);
                 UpdateDisplay();
             }
@@ -60,6 +69,7 @@ public class CursorDisplay : MonoBehaviour
         {
             if (gameObject.activeInHierarchy)
             {
+                Debug.Log("CursorDisplay: Deactivating cursor display");
                 gameObject.SetActive(false);
                 isAnimating = false;
             }
@@ -156,7 +166,12 @@ public class CursorDisplay : MonoBehaviour
     // Public method to trigger animation from a world position (like inventory slot)
     public static void StartPickupAnimation(Vector3 worldStartPos)
     {
-        if (instance == null) return;
+        Debug.Log($"CursorDisplay.StartPickupAnimation: Called with pos {worldStartPos}, instance: {instance != null}");
+        if (instance == null) 
+        {
+            Debug.LogWarning("CursorDisplay.StartPickupAnimation: Instance is null!");
+            return;
+        }
         instance.TriggerPickupAnimation(worldStartPos);
     }
     
