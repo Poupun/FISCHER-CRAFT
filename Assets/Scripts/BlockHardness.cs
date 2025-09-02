@@ -56,31 +56,29 @@ public static class BlockHardnessSystem
     
     public static float GetHardness(BlockType blockType)
     {
+        // Delegate to BlockManager for consistency
+        return BlockManager.GetHardness(blockType);
+    }
+    
+    public static bool IsUnbreakable(BlockType blockType)
+    {
+        // Delegate to BlockManager for consistency
+        return BlockManager.IsUnbreakable(blockType);
+    }
+    
+    public static float GetMiningTime(BlockType blockType)
+    {
+        // Delegate to BlockManager for consistency
+        return BlockManager.GetMiningTime(blockType);
+    }
+    
+    // Legacy fallback method for when BlockManager is not available
+    public static float GetHardnessFromLegacySystem(BlockType blockType)
+    {
         if (hardnessData.TryGetValue(blockType, out BlockHardnessData data))
         {
             return data.hardness;
         }
         return 1.0f; // Default hardness
-    }
-    
-    public static bool IsUnbreakable(BlockType blockType)
-    {
-        if (hardnessData.TryGetValue(blockType, out BlockHardnessData data))
-        {
-            return data.isUnbreakable;
-        }
-        return false;
-    }
-    
-    public static float GetMiningTime(BlockType blockType)
-    {
-        // Base mining time multiplied by hardness
-        float baseTime = 0.5f; // Base time in seconds for soft blocks
-        float hardness = GetHardness(blockType);
-        
-        if (IsUnbreakable(blockType))
-            return float.MaxValue;
-            
-        return baseTime * Mathf.Max(0.1f, hardness);
     }
 }

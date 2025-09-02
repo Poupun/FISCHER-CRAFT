@@ -17,7 +17,9 @@ public enum BlockType
     Iron,
     Gold,
     Diamond,
-    WoodPlanks
+    WoodPlanks,
+    Stick,
+    CraftingTable
 }
 
 [System.Serializable]
@@ -63,7 +65,9 @@ public static class BlockDatabase
         new BlockData(BlockType.Iron, "Iron Ore", new Color(0.8f, 0.7f, 0.6f)),
         new BlockData(BlockType.Gold, "Gold Ore", new Color(1.0f, 0.8f, 0.0f)),
         new BlockData(BlockType.Diamond, "Diamond Ore", new Color(0.4f, 0.8f, 1.0f)),
-        new BlockData(BlockType.WoodPlanks, "Wood Planks", new Color(0.8f, 0.6f, 0.3f))
+        new BlockData(BlockType.WoodPlanks, "Wood Planks", new Color(0.8f, 0.6f, 0.3f)),
+        new BlockData(BlockType.Stick, "Stick", new Color(0.7f, 0.5f, 0.2f)),
+        new BlockData(BlockType.CraftingTable, "Crafting Table", new Color(0.6f, 0.4f, 0.2f))
     };
     
     public static BlockData GetBlockData(BlockType blockType)

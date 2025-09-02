@@ -44,6 +44,16 @@ public class CursorDisplay : MonoBehaviour
             Debug.Log($"CursorDisplay Update: HasItem={InventoryCursor.HasItem()}, GameObject.active={gameObject.activeInHierarchy}, isAnimating={isAnimating}");
         }
         
+        // DISABLE this cursor system since InventoryCursor + CursorManager handles the cursor
+        // This prevents conflicts between two cursor systems
+        if (gameObject.activeInHierarchy)
+        {
+            Debug.Log("CursorDisplay: Disabling cursor display to prevent conflicts with InventoryCursor system");
+            gameObject.SetActive(false);
+        }
+        
+        // The code below is commented out to use InventoryCursor system instead
+        /*
         // Update cursor position to follow mouse
         if (InventoryCursor.HasItem())
         {
@@ -74,6 +84,7 @@ public class CursorDisplay : MonoBehaviour
                 isAnimating = false;
             }
         }
+        */
     }
     
     void UpdateAnimation()
@@ -119,7 +130,7 @@ public class CursorDisplay : MonoBehaviour
         
         if (icon != null)
         {
-            icon.sprite = GetSpriteForBlock(cursorStack.blockType);
+            icon.sprite = BlockManager.GetBlockSprite(cursorStack.blockType);
             icon.color = new Color(1f, 1f, 1f, 0.8f); // Slightly transparent
         }
         
@@ -129,39 +140,6 @@ public class CursorDisplay : MonoBehaviour
         }
     }
     
-    Sprite GetSpriteForBlock(BlockType type)
-    {
-        if (type == BlockType.Air) return null;
-        
-        Texture2D tex = null;
-        if ((int)type < BlockDatabase.blockTypes.Length)
-        {
-            tex = BlockDatabase.blockTypes[(int)type].blockTexture;
-        }
-        
-        if (tex == null)
-        {
-            var worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
-            if (worldGenerator != null)
-            {
-                switch (type)
-                {
-                    case BlockType.Grass: tex = worldGenerator.grassTexture; break;
-                    case BlockType.Dirt: tex = worldGenerator.dirtTexture; break;
-                    case BlockType.Stone: tex = worldGenerator.stoneTexture; break;
-                    case BlockType.Sand: tex = worldGenerator.sandTexture; break;
-                    case BlockType.Coal: tex = worldGenerator.coalTexture; break;
-                    case BlockType.Log: tex = worldGenerator.logTexture; break;
-                    case BlockType.Leaves: tex = worldGenerator.leavesTexture; break;
-                    case BlockType.WoodPlanks: tex = worldGenerator.woodPlanksTexture; break;
-                }
-            }
-        }
-        
-        if (tex == null) return null;
-        
-        return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 32f);
-    }
     
     // Public method to trigger animation from a world position (like inventory slot)
     public static void StartPickupAnimation(Vector3 worldStartPos)

@@ -14,13 +14,63 @@ public class CraftingManager : MonoBehaviour
     
     void Start()
     {
+        // Try multiple methods to find PlayerInventory
         playerInventory = FindFirstObjectByType<PlayerInventory>();
+        
+        if (playerInventory == null)
+        {
+            // Try finding it on the Player GameObject specifically
+            var playerObj = GameObject.Find("Player");
+            if (playerObj != null)
+            {
+                playerInventory = playerObj.GetComponent<PlayerInventory>();
+                Debug.Log($"CraftingManager.Start: Found PlayerInventory on Player GameObject: {playerInventory != null}");
+            }
+        }
+        
+        if (playerInventory == null)
+        {
+            // Last resort - try again with include inactive
+            playerInventory = FindFirstObjectByType<PlayerInventory>(FindObjectsInactive.Include);
+            Debug.Log($"CraftingManager.Start: Found PlayerInventory (including inactive): {playerInventory != null}");
+        }
+        
         InitializeDefaultRecipes();
+        
+        Debug.Log($"CraftingManager.Start: Final PlayerInventory result: {playerInventory != null}");
         
         // Subscribe to inventory changes to check for valid recipes
         if (playerInventory != null)
         {
             playerInventory.OnInventoryChanged += CheckForValidRecipe;
+            Debug.Log("CraftingManager.Start: Successfully subscribed to OnInventoryChanged event");
+            
+            // Force an initial recipe check
+            CheckForValidRecipe();
+        }
+        else
+        {
+            Debug.LogWarning("CraftingManager.Start: PlayerInventory not found after all attempts!");
+            // Try to connect later
+            StartCoroutine(TryConnectLater());
+        }
+    }
+    
+    System.Collections.IEnumerator TryConnectLater()
+    {
+        Debug.Log("CraftingManager: Trying to connect to PlayerInventory later...");
+        yield return new WaitForSeconds(1f);
+        
+        playerInventory = FindFirstObjectByType<PlayerInventory>();
+        if (playerInventory != null)
+        {
+            playerInventory.OnInventoryChanged += CheckForValidRecipe;
+            Debug.Log("CraftingManager: Successfully connected to PlayerInventory after delay!");
+            CheckForValidRecipe();
+        }
+        else
+        {
+            Debug.LogError("CraftingManager: Still couldn't find PlayerInventory after delay!");
         }
     }
     
@@ -45,32 +95,13 @@ public class CraftingManager : MonoBehaviour
         
         BlockType[,] currentPattern = GetCurrentCraftingPattern();
         
-        // Simple hardcoded recipe check: 1 log = 4 wood planks
-        bool hasValidRecipe = true;
-        int logCount = 0;
         
-        // Check all slots for recipe validity
-        for (int x = 0; x < 2; x++)
-        {
-            for (int y = 0; y < 2; y++)
-            {
-                if (currentPattern[x, y] == BlockType.Log)
-                {
-                    logCount++;
-                }
-                else if (currentPattern[x, y] != BlockType.Air)
-                {
-                    // If there's any other material, recipe doesn't match
-                    hasValidRecipe = false;
-                    break;
-                }
-            }
-            if (!hasValidRecipe) break; // Exit outer loop if invalid
-        }
+        // Check for multiple recipes
+        ItemStack recipeResult = CheckRecipes(currentPattern);
         
-        if (hasValidRecipe && logCount == 1)
+        if (!recipeResult.IsEmpty)
         {
-            currentResult = new ItemStack(BlockType.WoodPlanks, 4);
+            currentResult = recipeResult;
             SetResultSlot(currentResult);
         }
         else
@@ -80,6 +111,90 @@ public class CraftingManager : MonoBehaviour
         }
         
         isUpdatingRecipe = false; // Reset flag
+    }
+    
+    ItemStack CheckRecipes(BlockType[,] pattern)
+    {
+        // Recipe 1: Log -> Wood Planks (1 log = 4 wood planks)
+        if (CheckSingleItemRecipe(pattern, BlockType.Log, 1))
+        {
+            return new ItemStack(BlockType.WoodPlanks, 4);
+        }
+        
+        // Recipe 2: Stick Recipe (2 wood planks = 4 sticks, vertical arrangement)
+        // Check for vertical stick pattern: wood planks on top of each other
+        if (CheckStickRecipe(pattern))
+        {
+            return new ItemStack(BlockType.Stick, 4);
+        }
+        
+        // Recipe 3: Crafting Table (4 wood planks = 1 crafting table, 2x2 square)
+        if (CheckCraftingTableRecipe(pattern))
+        {
+            return new ItemStack(BlockType.CraftingTable, 1);
+        }
+        
+        return new ItemStack(); // No valid recipe
+    }
+    
+    bool CheckSingleItemRecipe(BlockType[,] pattern, BlockType requiredItem, int requiredCount)
+    {
+        int itemCount = 0;
+        
+        for (int x = 0; x < 2; x++)
+        {
+            for (int y = 0; y < 2; y++)
+            {
+                if (pattern[x, y] == requiredItem)
+                {
+                    itemCount++;
+                }
+                else if (pattern[x, y] != BlockType.Air)
+                {
+                    return false; // Other items present
+                }
+            }
+        }
+        
+        return itemCount == requiredCount;
+    }
+    
+    bool CheckStickRecipe(BlockType[,] pattern)
+    {
+        // Check for vertical arrangement: two wood planks vertically aligned
+        // Pattern should be: WoodPlanks on (0,0) and (0,1) OR (1,0) and (1,1)
+        
+        // Check left column (x=0)
+        if (pattern[0, 0] == BlockType.WoodPlanks && pattern[0, 1] == BlockType.WoodPlanks &&
+            pattern[1, 0] == BlockType.Air && pattern[1, 1] == BlockType.Air)
+        {
+            return true;
+        }
+        
+        // Check right column (x=1)  
+        if (pattern[1, 0] == BlockType.WoodPlanks && pattern[1, 1] == BlockType.WoodPlanks &&
+            pattern[0, 0] == BlockType.Air && pattern[0, 1] == BlockType.Air)
+        {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    bool CheckCraftingTableRecipe(BlockType[,] pattern)
+    {
+        // Check for 2x2 square of wood planks
+        for (int x = 0; x < 2; x++)
+        {
+            for (int y = 0; y < 2; y++)
+            {
+                if (pattern[x, y] != BlockType.WoodPlanks)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
     
     BlockType[,] GetCurrentCraftingPattern()

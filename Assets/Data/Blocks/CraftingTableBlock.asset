@@ -1,0 +1,32 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 12689b0430c51e84d9215f8660bb796d, type: 3}
+  m_Name: CraftingTableBlock
+  m_EditorClassIdentifier: 
+  blockType: 16
+  displayName: Crafting Table
+  tintColor: {r: 1, g: 1, b: 1, a: 1}
+  mainTexture: {fileID: 2800000, guid: f48dce71140e9194ca64cbfed9bbee69, type: 3}
+  hasMultipleSides: 1
+  topTexture: {fileID: 2800000, guid: dd8d4bfebc0291e449d2c7b385500112, type: 3}
+  sideTexture: {fileID: 2800000, guid: ad0f07c2f6e2b18409d20716e365cb0e, type: 3}
+  bottomTexture: {fileID: 2800000, guid: 86acf04695823ff44bd99f4ca302d94f, type: 3}
+  frontTexture: {fileID: 2800000, guid: f48dce71140e9194ca64cbfed9bbee69, type: 3}
+  backTexture: {fileID: 2800000, guid: ad0f07c2f6e2b18409d20716e365cb0e, type: 3}
+  leftTexture: {fileID: 2800000, guid: ad0f07c2f6e2b18409d20716e365cb0e, type: 3}
+  rightTexture: {fileID: 2800000, guid: ad0f07c2f6e2b18409d20716e365cb0e, type: 3}
+  hardness: 0.8
+  isUnbreakable: 0
+  isPlaceable: 1
+  isCraftable: 1
+  isMineable: 1
+  customMaterial: {fileID: 0}

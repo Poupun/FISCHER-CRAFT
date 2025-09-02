@@ -47,6 +47,8 @@ public class PlayerInventory : MonoBehaviour
         AddBlock(BlockType.Stone, 32);
         AddBlock(BlockType.Dirt, 16);
         AddBlock(BlockType.Log, 8);
+        AddBlock(BlockType.Stick, 16);
+        AddBlock(BlockType.CraftingTable, 2);
     }
 
     public bool AddBlock(BlockType type, int amount = 1)
@@ -205,6 +207,7 @@ public class PlayerInventory : MonoBehaviour
             int craftingStartIndex = hotbarSize + mainInventorySize;
             craftingInventory[slotIndex - craftingStartIndex] = stack;
         }
+        
         OnInventoryChanged?.Invoke();
     }
 

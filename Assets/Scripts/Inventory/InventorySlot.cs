@@ -89,7 +89,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
                 else
                 {
                     icon.enabled = true;
-                    icon.sprite = GetSpriteForBlock(currentStack.blockType);
+                    icon.sprite = BlockManager.GetBlockSprite(currentStack.blockType);
                     icon.color = Color.white;
                     icon.preserveAspect = true;  // Match HotbarUI setting
                 }
@@ -116,39 +116,6 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         }
     }
     
-    Sprite GetSpriteForBlock(BlockType type)
-    {
-        if (type == BlockType.Air) return null;
-        
-        Texture2D tex = null;
-        if ((int)type < BlockDatabase.blockTypes.Length)
-        {
-            tex = BlockDatabase.blockTypes[(int)type].blockTexture;
-        }
-        
-        if (tex == null)
-        {
-            var worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
-            if (worldGenerator != null)
-            {
-                switch (type)
-                {
-                    case BlockType.Grass: tex = worldGenerator.grassTexture; break;
-                    case BlockType.Dirt: tex = worldGenerator.dirtTexture; break;
-                    case BlockType.Stone: tex = worldGenerator.stoneTexture; break;
-                    case BlockType.Sand: tex = worldGenerator.sandTexture; break;
-                    case BlockType.Coal: tex = worldGenerator.coalTexture; break;
-                    case BlockType.Log: tex = worldGenerator.logTexture; break;
-                    case BlockType.Leaves: tex = worldGenerator.leavesTexture; break;
-                    case BlockType.WoodPlanks: tex = worldGenerator.woodPlanksTexture; break;
-                }
-            }
-        }
-        
-        if (tex == null) return null;
-        
-        return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 32f);
-    }
     
     public void OnPointerClick(PointerEventData eventData)
     {
@@ -202,8 +169,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
                 // Check for new valid recipe after consuming materials
                 craftingManager.CheckForValidRecipe();
                 
-                // Trigger pickup animation
-                CursorDisplay.StartPickupAnimation(transform.position);
+                // Animation handled by InventoryCursor system
             }
             else if (InventoryCursor.HasItem() && InventoryCursor.GetCursorStack().blockType == currentStack.blockType)
             {
@@ -306,8 +272,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
                 InventoryCursor.SetCursorStack(currentStack);
                 inventory.SetSlot(slotIndex, new ItemStack());
                 
-                // Trigger pickup animation from this slot's position to mouse
-                CursorDisplay.StartPickupAnimation(transform.position);
+                // Animation handled by InventoryCursor system
             }
         }
         else
@@ -362,8 +327,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
                 InventoryCursor.SetCursorStack(new ItemStack(currentStack.blockType, halfCount));
                 inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - halfCount));
                 
-                // Trigger pickup animation from this slot's position to mouse
-                CursorDisplay.StartPickupAnimation(transform.position);
+                // Animation handled by InventoryCursor system
             }
             else if (!currentStack.IsEmpty)
             {
@@ -371,8 +335,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
                 InventoryCursor.SetCursorStack(currentStack);
                 inventory.SetSlot(slotIndex, new ItemStack());
                 
-                // Trigger pickup animation from this slot's position to mouse
-                CursorDisplay.StartPickupAnimation(transform.position);
+                // Animation handled by InventoryCursor system
             }
         }
         else

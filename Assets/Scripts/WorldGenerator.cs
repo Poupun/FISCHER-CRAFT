@@ -49,9 +49,14 @@ public class WorldGenerator : MonoBehaviour
     [Tooltip("After chunks are ready, reposition the player to stand on the highest solid block under them.")]
     public bool snapPlayerToGroundOnSpawn = true;
     
-    [Header("Block Textures")]
+    [Header("Block Management System")]
+    [Tooltip("Block textures and properties are now managed by BlockManager using BlockConfiguration assets. See Assets/Data/Blocks/ folder.")]
+    [SerializeField] private bool _useNewBlockSystem = true; // Visual indicator in Inspector
+    
+    [Header("Legacy Block Textures (For Backward Compatibility)")]
+    [Tooltip("These textures are kept for fallback compatibility. Use BlockConfiguration assets instead.")]
     public Texture2D grassTexture;
-    public Texture2D grassSideTexture; // sides for grass block
+    public Texture2D grassSideTexture;
     public Texture2D dirtTexture;
     public Texture2D stoneTexture;
     public Texture2D sandTexture;
@@ -64,6 +69,10 @@ public class WorldGenerator : MonoBehaviour
     public Texture2D ironTexture;
     public Texture2D goldTexture;
     public Texture2D diamondTexture;
+    public Texture2D stickTexture;
+    public Texture2D craftingTableTexture;
+    public Texture2D craftingTableFrontTexture;
+    public Texture2D craftingTableSideTexture;
 
     [Header("Plants (New)")]
     [Tooltip("Scriptable Object list of plants with textures, sizes, and weights.")]
@@ -736,67 +745,145 @@ public class WorldGenerator : MonoBehaviour
         
         for (int i = 0; i < BlockDatabase.blockTypes.Length; i++)
         {
-            if (BlockDatabase.blockTypes[i].blockType != BlockType.Air)
+            var blockType = BlockDatabase.blockTypes[i].blockType;
+            if (blockType != BlockType.Air)
             {
-                // Use URP/Lit shader instead of Standard
-                Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+                // Try to get material from BlockManager first
+                Material mat = BlockManager.GetBlockMaterial(blockType);
                 
-                // Apply texture if available, otherwise use color
-                Texture2D tex = BlockDatabase.blockTypes[i].blockTexture;
-                
-                // Fallback to WorldGenerator textures if BlockDatabase doesn't have it
-                if (tex == null)
+                // If BlockManager doesn't have it, create one using available textures
+                if (mat == null)
                 {
-                    var blockType = BlockDatabase.blockTypes[i].blockType;
-                    switch (blockType)
-                    {
-                        case BlockType.Grass: tex = grassTexture; break;
-                        case BlockType.Dirt: tex = dirtTexture; break;
-                        case BlockType.Stone: tex = stoneTexture; break;
-                        case BlockType.Sand: tex = sandTexture; break;
-                        case BlockType.Coal: tex = coalTexture; break;
-                        case BlockType.Log: tex = logTexture; break;
-                        case BlockType.Leaves: tex = leavesTexture; break;
-                        case BlockType.WoodPlanks: tex = woodPlanksTexture; break;
-                        case BlockType.Bedrock: tex = bedrockTexture; break;
-                        case BlockType.Gravel: tex = gravelTexture; break;
-                        case BlockType.Iron: tex = ironTexture; break;
-                        case BlockType.Gold: tex = goldTexture; break;
-                        case BlockType.Diamond: tex = diamondTexture; break;
-                    }
+                    mat = CreateMaterialForBlockType(blockType);
                 }
                 
-                if (tex != null)
+                if (mat != null)
                 {
-                    mat.mainTexture = tex;
-                    mat.SetTexture("_BaseMap", tex);
-                    mat.color = Color.white; // Use white to show texture correctly
+                    blockMaterials[i] = mat;
+                    BlockDatabase.blockTypes[i].blockMaterial = mat;
                 }
                 else
                 {
-                    mat.color = BlockDatabase.blockTypes[i].blockColor;
-                }
-                
-                // Configure material properties for pixel art and reduced tiling
-                mat.SetFloat("_Smoothness", 0.0f); // No glossiness
-                mat.SetFloat("_Metallic", 0.0f);   // Not metallic
-                // Two-sided so we see the underside faces when looking down into holes
-                mat.SetFloat("_Cull", 0f);
-                
-                mat.name = BlockDatabase.blockTypes[i].blockName + "Material";
-                blockMaterials[i] = mat;
-                BlockDatabase.blockTypes[i].blockMaterial = mat;
-
-                // Ambient fill to avoid pitch-black faces in shadow
-                if (enableAmbientFill)
-                {
-                    Color ec = new Color(ambientFill, ambientFill, ambientFill, 1f);
-                    mat.SetColor("_EmissionColor", ec);
-                    mat.EnableKeyword("_EMISSION");
+                    Debug.LogError($"WorldGenerator: Failed to create material for {blockType}!");
                 }
             }
         }
-
+        
+        // Create special materials for multi-sided blocks
+        CreateGrassSideMaterial();
+        CreateCraftingTableMaterials();
+        
+        // Configure special material properties (leaves, etc.)
+        ConfigureSpecialMaterials();
+        
+        Debug.Log($"WorldGenerator: Created materials for {blockMaterials.Length} block types using BlockManager system");
+    }
+    
+    Material CreateMaterialForBlockType(BlockType blockType)
+    {
+        // Use URP/Lit shader
+        Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        
+        // Get texture from BlockManager or fallback to hardcoded textures
+        Texture2D tex = GetTextureForBlockType(blockType);
+        
+        if (tex != null)
+        {
+            mat.mainTexture = tex;
+            mat.SetTexture("_BaseMap", tex);
+            mat.color = Color.white;
+        }
+        else
+        {
+            // Fallback to block database color
+            mat.color = BlockDatabase.blockTypes[(int)blockType].blockColor;
+        }
+        
+        // Configure material properties for pixel art
+        mat.SetFloat("_Smoothness", 0.0f);
+        mat.SetFloat("_Metallic", 0.0f);
+        mat.SetFloat("_Cull", 0f); // Two-sided
+        
+        mat.name = blockType + "Material";
+        return mat;
+    }
+    
+    Texture2D GetTextureForBlockType(BlockType blockType)
+    {
+        // First try BlockManager
+        var blockConfig = BlockManager.GetBlockConfiguration(blockType);
+        if (blockConfig != null && blockConfig.mainTexture != null)
+        {
+            return blockConfig.mainTexture;
+        }
+        
+        // Fallback to legacy hardcoded textures (for backward compatibility during transition)
+        switch (blockType)
+        {
+            case BlockType.Grass: return grassTexture;
+            case BlockType.Dirt: return dirtTexture;
+            case BlockType.Stone: return stoneTexture;
+            case BlockType.Sand: return sandTexture;
+            case BlockType.Coal: return coalTexture;
+            case BlockType.Log: return logTexture;
+            case BlockType.Leaves: return leavesTexture;
+            case BlockType.WoodPlanks: return woodPlanksTexture;
+            case BlockType.Stick: return stickTexture;
+            case BlockType.CraftingTable: return craftingTableTexture;
+            case BlockType.Bedrock: return bedrockTexture;
+            case BlockType.Gravel: return gravelTexture;
+            case BlockType.Iron: return ironTexture;
+            case BlockType.Gold: return goldTexture;
+            case BlockType.Diamond: return diamondTexture;
+            default: return null;
+        }
+    }
+    
+    void CreateGrassSideMaterial()
+    {
+        var blockConfig = BlockManager.GetBlockConfiguration(BlockType.Grass);
+        Texture2D grassSideTex = (blockConfig != null && blockConfig.hasMultipleSides && blockConfig.sideTexture != null) 
+            ? blockConfig.sideTexture 
+            : grassSideTexture; // Fallback
+            
+        if (grassSideTex != null)
+        {
+            // Main grass side material
+            _grassSideMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            _grassSideMaterial.mainTexture = grassSideTex;
+            _grassSideMaterial.SetTexture("_BaseMap", grassSideTex);
+            _grassSideMaterial.color = Color.white;
+            _grassSideMaterial.SetFloat("_Smoothness", 0.0f);
+            _grassSideMaterial.SetFloat("_Metallic", 0.0f);
+            _grassSideMaterial.SetFloat("_Cull", 0f);
+            _grassSideMaterial.name = "GrassSideMaterial";
+            
+            // Overlay variant (alpha-clipped, unlit-like) to layer over dirt base
+            _grassSideOverlayMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            _grassSideOverlayMaterial.name = "GrassSideOverlay";
+            _grassSideOverlayMaterial.mainTexture = grassSideTex;
+            _grassSideOverlayMaterial.SetTexture("_BaseMap", grassSideTex);
+            _grassSideOverlayMaterial.color = Color.white;
+            _grassSideOverlayMaterial.SetFloat("_Cull", 0f);
+            _grassSideOverlayMaterial.SetFloat("_AlphaClip", 1f);
+            _grassSideOverlayMaterial.SetFloat("_Cutoff", 0.5f);
+            _grassSideOverlayMaterial.EnableKeyword("_ALPHATEST_ON");
+            _grassSideOverlayMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
+        }
+    }
+    
+    void CreateCraftingTableMaterials()
+    {
+        var blockConfig = BlockManager.GetBlockConfiguration(BlockType.CraftingTable);
+        if (blockConfig != null && blockConfig.hasMultipleSides)
+        {
+            // Create materials for different sides if textures are available
+            // This method can be expanded based on specific crafting table texture needs
+        }
+    }
+    
+    void ConfigureSpecialMaterials()
+    {
         // Leaves: ensure proper lighting with URP Simple Lit + alpha cutout
         if (BlockDatabase.blockTypes[(int)BlockType.Leaves].blockMaterial != null)
         {
@@ -821,31 +908,6 @@ public class WorldGenerator : MonoBehaviour
                 }
             }
             ApplyLeafMaterialSettings(lm);
-        }
-
-        // Build a dedicated grass side material if we have a side texture
-        if (grassSideTexture != null)
-        {
-            _grassSideMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            _grassSideMaterial.name = "GrassSideMaterial";
-            _grassSideMaterial.mainTexture = grassSideTexture;
-            _grassSideMaterial.SetTexture("_BaseMap", grassSideTexture);
-            _grassSideMaterial.color = Color.white;
-            _grassSideMaterial.SetFloat("_Smoothness", 0.0f);
-            _grassSideMaterial.SetFloat("_Metallic", 0.0f);
-            _grassSideMaterial.SetFloat("_Cull", 0f);
-
-            // Overlay variant (alpha-clipped, unlit-like) to layer over dirt base
-            _grassSideOverlayMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
-            _grassSideOverlayMaterial.name = "GrassSideOverlay";
-            _grassSideOverlayMaterial.mainTexture = grassSideTexture;
-            _grassSideOverlayMaterial.SetTexture("_BaseMap", grassSideTexture);
-            _grassSideOverlayMaterial.color = Color.white;
-            _grassSideOverlayMaterial.SetFloat("_Cull", 0f);
-            _grassSideOverlayMaterial.SetFloat("_AlphaClip", 1f);
-            _grassSideOverlayMaterial.SetFloat("_Cutoff", 0.5f);
-            _grassSideOverlayMaterial.EnableKeyword("_ALPHATEST_ON");
-            _grassSideOverlayMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest; // after opaque dirt
         }
     }
 
@@ -885,26 +947,88 @@ public class WorldGenerator : MonoBehaviour
     // faceIndex matches ChunkMeshBuilder's order: 0=+X,1=-X,2=+Y(top),3=-Y(bottom),4=+Z,5=-Z
     public Material GetFaceMaterial(BlockType t, int faceIndex)
     {
-        if (t != BlockType.Grass)
+        // Check if this block type has multi-sided configuration
+        var blockConfig = BlockManager.GetBlockConfiguration(t);
+        if (blockConfig != null && blockConfig.hasMultipleSides)
         {
-            return GetBlockMaterial(t);
+            return GetMultiSidedMaterial(t, faceIndex, blockConfig);
         }
-        // Grass: top uses grassTexture, bottom uses dirt, sides use grassSide
-        if (faceIndex == 2) // +Y top
+        
+        // For single-sided blocks or fallback, use standard material
+        return GetBlockMaterial(t);
+    }
+    
+    Material GetMultiSidedMaterial(BlockType blockType, int faceIndex, BlockConfiguration config)
+    {
+        switch (blockType)
         {
-            return GetBlockMaterial(BlockType.Grass);
+            case BlockType.Grass:
+                return GetGrassFaceMaterial(faceIndex, config);
+                
+            case BlockType.CraftingTable:
+                return GetCraftingTableFaceMaterial(faceIndex, config);
+                
+            default:
+                // For other multi-sided blocks, use main texture
+                return GetBlockMaterial(blockType);
         }
-        if (faceIndex == 3) // -Y bottom
+    }
+    
+    Material GetGrassFaceMaterial(int faceIndex, BlockConfiguration config)
+    {
+        // faceIndex: 0=+X,1=-X,2=+Y(top),3=-Y(bottom),4=+Z,5=-Z
+        switch (faceIndex)
         {
-            return GetBlockMaterial(BlockType.Dirt);
+            case 2: // Top face
+                return config.topTexture != null ? 
+                    CreateTempMaterial(config.topTexture) : 
+                    GetBlockMaterial(BlockType.Grass);
+                    
+            case 3: // Bottom face  
+                return config.bottomTexture != null ?
+                    CreateTempMaterial(config.bottomTexture) :
+                    GetBlockMaterial(BlockType.Dirt); // Fallback
+                    
+            default: // Side faces
+                if (config.sideTexture != null && _grassSideMaterial != null)
+                    return _grassSideMaterial;
+                return GetBlockMaterial(BlockType.Grass); // Fallback
         }
-        // sides
-        if (_grassSideMaterial != null)
+    }
+    
+    Material GetCraftingTableFaceMaterial(int faceIndex, BlockConfiguration config)
+    {
+        // Similar logic for crafting table faces
+        switch (faceIndex)
         {
-            return _grassSideMaterial;
+            case 2: // Top face
+                return config.topTexture != null ?
+                    CreateTempMaterial(config.topTexture) :
+                    GetBlockMaterial(BlockType.CraftingTable);
+                    
+            case 3: // Bottom face
+                return config.bottomTexture != null ?
+                    CreateTempMaterial(config.bottomTexture) :
+                    GetBlockMaterial(BlockType.WoodPlanks); // Fallback to wood planks
+                    
+            default: // Side faces
+                return config.sideTexture != null ?
+                    CreateTempMaterial(config.sideTexture) :
+                    GetBlockMaterial(BlockType.CraftingTable);
         }
-        // Fallback to grass if no side texture available
-        return GetBlockMaterial(BlockType.Grass);
+    }
+    
+    // Helper method to create temporary materials for specific textures
+    Material CreateTempMaterial(Texture2D texture)
+    {
+        var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        mat.mainTexture = texture;
+        mat.SetTexture("_BaseMap", texture);
+        mat.color = Color.white;
+        mat.SetFloat("_Smoothness", 0.0f);
+        mat.SetFloat("_Metallic", 0.0f);
+        mat.SetFloat("_Cull", 0f);
+        return mat;
     }
 
     // Exposed for mesh builder overlay composition
@@ -1461,6 +1585,55 @@ public class WorldGenerator : MonoBehaviour
             }
             blockObjects[position] = grassBlockParent;
         }
+        else if (blockType == BlockType.CraftingTable)
+        {
+            // Crafting table has different textures for different faces
+            GameObject craftingTableParent = new GameObject($"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})");
+            craftingTableParent.transform.position = position;
+            craftingTableParent.transform.parent = transform;
+
+            // Define faces: 0=up, 1=down, 2=left, 3=right, 4=forward, 5=back
+            Vector3[] faceNormals = { Vector3.up, Vector3.down, Vector3.left, Vector3.right, Vector3.forward, Vector3.back };
+            Material[] faceMaterials = {
+                GetBlockMaterial(BlockType.CraftingTable), // Top
+                GetBlockMaterial(BlockType.WoodPlanks),    // Bottom (wood planks)
+                GetBlockMaterial(BlockType.CraftingTable), // Side
+                GetBlockMaterial(BlockType.CraftingTable), // Side
+                GetBlockMaterial(BlockType.CraftingTable), // Front
+                GetBlockMaterial(BlockType.CraftingTable)  // Back
+            };
+            Texture2D[] faceTextures = {
+                craftingTableTexture,      // Top
+                woodPlanksTexture,         // Bottom (wood planks)
+                craftingTableSideTexture,  // Left side
+                craftingTableSideTexture,  // Right side  
+                craftingTableFrontTexture, // Front
+                craftingTableSideTexture   // Back
+            };
+
+            for (int i = 0; i < 6; i++)
+            {
+                Vector3Int neighborPos = position + Vector3Int.RoundToInt(faceNormals[i]);
+                if (IsOutOfBounds(neighborPos) || GetBlockType(neighborPos) == BlockType.Air)
+                {
+                    GameObject face = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    face.transform.SetParent(craftingTableParent.transform, false);
+                    face.transform.position = position + faceNormals[i] * 0.5f;
+                    face.transform.rotation = Quaternion.LookRotation(-faceNormals[i]);
+                    
+                    Renderer faceRenderer = face.GetComponent<Renderer>();
+                    if (faceRenderer != null)
+                    {
+                        Material mat = CreateVariationMaterial(faceMaterials[i], position);
+                        mat.mainTexture = faceTextures[i];
+                        mat.SetTexture("_BaseMap", faceTextures[i]);
+                        faceRenderer.material = mat;
+                    }
+                    Destroy(face.GetComponent<Collider>());
+                }
+            }
+            blockObjects[position] = craftingTableParent;
+        }
         else
         {
             GameObject block = Instantiate(blockPrefab, position, Quaternion.identity, transform);
@@ -1543,6 +1716,55 @@ public class WorldGenerator : MonoBehaviour
                 }
             }
             blockObjects[position] = grassBlockParent;
+        }
+        else if (blockType == BlockType.CraftingTable)
+        {
+            // Crafting table has different textures for different faces
+            GameObject craftingTableParent = new GameObject($"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})");
+            craftingTableParent.transform.position = position;
+            craftingTableParent.transform.SetParent(p, true);
+
+            // Define faces: 0=up, 1=down, 2=left, 3=right, 4=forward, 5=back
+            Vector3[] faceNormals = { Vector3.up, Vector3.down, Vector3.left, Vector3.right, Vector3.forward, Vector3.back };
+            Material[] faceMaterials = {
+                GetBlockMaterial(BlockType.CraftingTable), // Top
+                GetBlockMaterial(BlockType.WoodPlanks),    // Bottom (wood planks)
+                GetBlockMaterial(BlockType.CraftingTable), // Side
+                GetBlockMaterial(BlockType.CraftingTable), // Side
+                GetBlockMaterial(BlockType.CraftingTable), // Front
+                GetBlockMaterial(BlockType.CraftingTable)  // Back
+            };
+            Texture2D[] faceTextures = {
+                craftingTableTexture,      // Top
+                woodPlanksTexture,         // Bottom (wood planks)
+                craftingTableSideTexture,  // Left side
+                craftingTableSideTexture,  // Right side  
+                craftingTableFrontTexture, // Front
+                craftingTableSideTexture   // Back
+            };
+
+            for (int i = 0; i < 6; i++)
+            {
+                Vector3Int neighborPos = position + Vector3Int.RoundToInt(faceNormals[i]);
+                if (IsOutOfBounds(neighborPos) || GetBlockType(neighborPos) == BlockType.Air)
+                {
+                    GameObject face = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    face.transform.SetParent(craftingTableParent.transform, false);
+                    face.transform.position = position + faceNormals[i] * 0.5f;
+                    face.transform.rotation = Quaternion.LookRotation(-faceNormals[i]);
+                    
+                    Renderer faceRenderer = face.GetComponent<Renderer>();
+                    if (faceRenderer != null)
+                    {
+                        Material mat = CreateVariationMaterial(faceMaterials[i], position);
+                        mat.mainTexture = faceTextures[i];
+                        mat.SetTexture("_BaseMap", faceTextures[i]);
+                        faceRenderer.material = mat;
+                    }
+                    Destroy(face.GetComponent<Collider>());
+                }
+            }
+            blockObjects[position] = craftingTableParent;
         }
         else
         {

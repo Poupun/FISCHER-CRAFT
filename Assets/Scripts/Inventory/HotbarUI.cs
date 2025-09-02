@@ -14,8 +14,6 @@ public class HotbarUI : MonoBehaviour
     [Header("Selection Animation")] public float selectedScale = 1.25f; public float normalScale = 1f; public float scaleLerpSpeed = 12f;
 
     private SlotUI[] slots;
-    private Dictionary<BlockType, Sprite> spriteCache = new Dictionary<BlockType, Sprite>();
-    private WorldGenerator worldGenerator; // to access textures
 
     [System.Serializable]
     private class SlotUI
@@ -36,8 +34,7 @@ public class HotbarUI : MonoBehaviour
     void Start()
     {
         if (inventory == null) inventory = FindFirstObjectByType<PlayerInventory>();
-        worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
-    if (inventory != null) inventory.OnInventoryChanged += HandleInventoryChanged;
+        if (inventory != null) inventory.OnInventoryChanged += HandleInventoryChanged;
         EnsureSlots();
         RefreshAll(force: true);
         ForceInitialScales();
@@ -60,7 +57,6 @@ public class HotbarUI : MonoBehaviour
             inventory = FindFirstObjectByType<PlayerInventory>();
             if (inventory == null) return;
         }
-    if (worldGenerator == null) worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
 
         if (slots == null || slots.Length == 0) EnsureSlots();
         if (slots == null) return;
@@ -190,7 +186,7 @@ public class HotbarUI : MonoBehaviour
             else
             {
                 ui.icon.enabled = true;
-                ui.icon.sprite = GetSpriteForBlock(stack.blockType);
+                ui.icon.sprite = BlockManager.GetBlockSprite(stack.blockType);
                 ui.icon.color = Color.white;
                 ui.icon.preserveAspect = true;
             }
@@ -237,37 +233,6 @@ public class HotbarUI : MonoBehaviour
         }
     }
 
-    Sprite GetSpriteForBlock(BlockType type)
-    {
-        if (type == BlockType.Air) return null;
-    // Using only flat texture sprites now (3D generator removed)
-        // Fallback: existing texture->sprite simple icon
-        if (spriteCache.TryGetValue(type, out var spc) && spc != null) return spc;
-        Texture2D tex = null;
-        if ((int)type < BlockDatabase.blockTypes.Length)
-        {
-            tex = BlockDatabase.blockTypes[(int)type].blockTexture;
-        }
-        if (tex == null && worldGenerator != null)
-        {
-            switch (type)
-            {
-                case BlockType.Grass: tex = worldGenerator.grassTexture; break;
-                case BlockType.Dirt: tex = worldGenerator.dirtTexture; break;
-                case BlockType.Stone: tex = worldGenerator.stoneTexture; break;
-                case BlockType.Sand: tex = worldGenerator.sandTexture; break;
-                case BlockType.Coal: tex = worldGenerator.coalTexture; break;
-                case BlockType.Log: tex = worldGenerator.logTexture; break;
-                case BlockType.Leaves: tex = worldGenerator.leavesTexture; break;
-                case BlockType.WoodPlanks: tex = worldGenerator.woodPlanksTexture; break;
-            }
-        }
-        if (tex == null) { spriteCache[type] = null; return null; }
-        var sprite = Sprite.Create(tex, new Rect(0,0,tex.width, tex.height), new Vector2(0.5f,0.5f), 32f);
-        sprite.name = type + "_SpriteFallback";
-        spriteCache[type] = sprite;
-        return sprite;
-    }
 
     void DumpSlotIconMapping()
     {

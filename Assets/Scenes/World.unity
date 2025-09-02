@@ -185,19 +185,6 @@ MonoBehaviour:
   normalColor: {r: 0, g: 0, b: 0, a: 0.5}
   highlightColor: {r: 1, g: 0.92156863, b: 0.015686275, a: 1}
   slotIndex: 37
---- !u!134 &95932585
-PhysicsMaterial:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: ' (Instance) (Instance) (Instance) (Instance) (Instance)'
-  serializedVersion: 2
-  m_DynamicFriction: 0.6
-  m_StaticFriction: 0.6
-  m_Bounciness: 0
-  m_FrictionCombine: 0
-  m_BounceCombine: 0
 --- !u!1 &107248621
 GameObject:
   m_ObjectHideFlags: 0
@@ -233,60 +220,6 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 771, y: 474}
   m_Pivot: {x: 0.5, y: 0.5}
---- !u!1 &454117962
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 454117963}
-  - component: {fileID: 454117964}
-  m_Layer: 0
-  m_Name: PlayerStatsUI
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &454117963
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 454117962}
-  serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -917.45734, y: -565.03986, z: 0}
-  m_LocalScale: {x: 1.6741922, y: 1.6741922, z: 1.6741922}
-  m_ConstrainProportionsScale: 0
-  m_Children:
-  - {fileID: 1763933864}
-  - {fileID: 1172393808}
-  m_Father: {fileID: 2112105365}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &454117964
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 454117962}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: cc671bf3bda05f44284f59f613bf46b6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  healthBarParent: {fileID: 0}
-  healthIconPrefab: {fileID: 0}
-  hungerBarParent: {fileID: 0}
-  hungerIconPrefab: {fileID: 0}
-  healthFullSprite: {fileID: 0}
-  healthEmptySprite: {fileID: 0}
-  hungerFullSprite: {fileID: 0}
-  hungerEmptySprite: {fileID: 0}
 --- !u!1 &487243354 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 7973261085603349039, guid: 9a0b0df0ff12a404abef0bac44e0176b, type: 3}
@@ -715,6 +648,19 @@ MonoBehaviour:
   normalColor: {r: 0, g: 0, b: 0, a: 0.5}
   highlightColor: {r: 1, g: 0.92156863, b: 0.015686275, a: 1}
   slotIndex: 36
+--- !u!134 &743818924
+PhysicsMaterial:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: ' (Instance) (Instance) (Instance) (Instance) (Instance) (Instance)'
+  serializedVersion: 2
+  m_DynamicFriction: 0.6
+  m_StaticFriction: 0.6
+  m_Bounciness: 0
+  m_FrictionCombine: 0
+  m_BounceCombine: 0
 --- !u!1 &804551687
 GameObject:
   m_ObjectHideFlags: 0
@@ -1093,6 +1039,7 @@ GameObject:
   - component: {fileID: 884223581}
   - component: {fileID: 884223580}
   - component: {fileID: 884223582}
+  - component: {fileID: 884223583}
   m_Layer: 0
   m_Name: WorldGenerator
   m_TagString: Untagged
@@ -1129,20 +1076,25 @@ MonoBehaviour:
   blockPrefab: {fileID: 8370143156882375915, guid: 80ba404bf0581704bb0ca88f410774a6, type: 3}
   delayPlayerSpawnUntilChunks: 1
   snapPlayerToGroundOnSpawn: 1
+  _useNewBlockSystem: 1
   grassTexture: {fileID: 2800000, guid: 066d2f2f39512774da5b727fe4ff791f, type: 3}
   grassSideTexture: {fileID: 2800000, guid: 063390b76bb116d498c69cd9e8fb611d, type: 3}
   dirtTexture: {fileID: 2800000, guid: 37db4ec71f0a4344aa93ab0ea4c9146b, type: 3}
   stoneTexture: {fileID: 2800000, guid: 84efa5e9958edd54dba17316450a33d6, type: 3}
   sandTexture: {fileID: 2800000, guid: 00b0e9986577d2c40ab38f6ddf5f069c, type: 3}
-  coalTexture: {fileID: 0}
+  coalTexture: {fileID: 2800000, guid: f57beb513d6b56746adb23defae12c29, type: 3}
   logTexture: {fileID: 2800000, guid: 274accba039c93943a8997b11e463bbb, type: 3}
   leavesTexture: {fileID: 2800000, guid: ddeb442baf2b0d64b8674b1e8890ab4a, type: 3}
   woodPlanksTexture: {fileID: 2800000, guid: 86acf04695823ff44bd99f4ca302d94f, type: 3}
-  bedrockTexture: {fileID: 0}
-  gravelTexture: {fileID: 0}
-  ironTexture: {fileID: 0}
-  goldTexture: {fileID: 0}
-  diamondTexture: {fileID: 0}
+  bedrockTexture: {fileID: 2800000, guid: d1afa9b33f03c6343b33a9f7f286c51b, type: 3}
+  gravelTexture: {fileID: 2800000, guid: dd5be13ab67ca7546a7f0bfe0311fe65, type: 3}
+  ironTexture: {fileID: 2800000, guid: 120647016aa549e41a4f0976e3a2dd38, type: 3}
+  goldTexture: {fileID: 2800000, guid: b96a7798288bd6749bc1cfbd0d018478, type: 3}
+  diamondTexture: {fileID: 2800000, guid: 5b82c22922b31df4ca92d09e1290fb80, type: 3}
+  stickTexture: {fileID: 2800000, guid: d45831b6be74db94c930d38a180db08b, type: 3}
+  craftingTableTexture: {fileID: 2800000, guid: dd8d4bfebc0291e449d2c7b385500112, type: 3}
+  craftingTableFrontTexture: {fileID: 0}
+  craftingTableSideTexture: {fileID: 0}
   plantDatabase: {fileID: 11400000, guid: 44330b0a711c68847915c9e2a961c5ee, type: 2}
   plantDensity: 0.15
   textureScaleVariation: 1
@@ -1250,6 +1202,18 @@ MonoBehaviour:
   reflectionBounces: 1
   applyOnAwake: 1
   applyEveryUpdateInEditor: 1
+--- !u!114 &884223583
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 884223579}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de9bfe8089b6214cbf6498ef2380105, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &1073604322
 GameObject:
   m_ObjectHideFlags: 0
@@ -1395,41 +1359,6 @@ MonoBehaviour:
   step: 0.05
   applyOnAwake: 1
   applyEveryUpdateInEditor: 1
---- !u!1 &1172393807
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1172393808}
-  m_Layer: 0
-  m_Name: HungerBar
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!224 &1172393808
-RectTransform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1172393807}
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 454117963}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0.5, y: 0.5}
-  m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 150}
-  m_SizeDelta: {x: 100, y: 100}
-  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &1267733280 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 7973261085603349039, guid: 9a0b0df0ff12a404abef0bac44e0176b, type: 3}
@@ -1952,7 +1881,7 @@ CharacterController:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1426170045}
-  m_Material: {fileID: 95932585}
+  m_Material: {fileID: 743818924}
   m_IncludeLayers:
     serializedVersion: 2
     m_Bits: 0
@@ -2209,7 +2138,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1465360961}
-  - component: {fileID: 1465360962}
   - component: {fileID: 1465360963}
   m_Layer: 0
   m_Name: CraftingManager
@@ -2233,21 +2161,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 2112105365}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1465360962
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1465360960}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f09e905b58c71624d8b759badcbd38b6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  craftingStartIndex: 36
-  craftingSlotCount: 4
-  resultSlotIndex: 40
 --- !u!114 &1465360963
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2883,7 +2796,7 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1752783396}
   m_CullTransparentMesh: 1
---- !u!1 &1763933863
+--- !u!1 &1805047376
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -2891,33 +2804,42 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 1763933864}
+  - component: {fileID: 1805047377}
+  - component: {fileID: 1805047378}
   m_Layer: 0
-  m_Name: HealthBar
+  m_Name: CursorManager
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!224 &1763933864
-RectTransform:
+--- !u!4 &1805047377
+Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1763933863}
+  m_GameObject: {fileID: 1805047376}
+  serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: -979.28357, y: -529.3666, z: 0}
+  m_LocalScale: {x: 1.7853848, y: 1.7853848, z: 1.7853848}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 454117963}
+  m_Father: {fileID: 2112105365}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0.5, y: 0.5}
-  m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 200}
-  m_SizeDelta: {x: 100, y: 100}
-  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1805047378
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1805047376}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f5b12cfb92cf17f46b917b9ac5e00ef8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &1908627868
 GameObject:
   m_ObjectHideFlags: 0
@@ -2993,6 +2915,88 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1908627868}
   m_CullTransparentMesh: 1
+--- !u!1 &1993967619
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1993967620}
+  - component: {fileID: 1993967621}
+  - component: {fileID: 1993967622}
+  m_Layer: 0
+  m_Name: BlockManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1993967620
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1993967619}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -979.28357, y: -529.3666, z: 0}
+  m_LocalScale: {x: 1.7853848, y: 1.7853848, z: 1.7853848}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2112105365}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1993967621
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1993967619}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ac8a5ebd606c5804981c8b1bc1911cca, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  allBlocks:
+  - {fileID: 11400000, guid: f315b044fddcd2647b39e53965cc584d, type: 2}
+  - {fileID: 11400000, guid: 5fb8095aaa8bd7b47bc9eaa11aa92b91, type: 2}
+  - {fileID: 11400000, guid: fe2d2e6b4463ae54aa3cbe3e3b8ea2d1, type: 2}
+  - {fileID: 11400000, guid: f84bc235993b2634cab9fd49d1d26ea1, type: 2}
+  - {fileID: 11400000, guid: 062d5b2c5b2a8d0418a3ccd55c64b547, type: 2}
+  - {fileID: 11400000, guid: 0031bc9388ba54045af46c1d67872d45, type: 2}
+  - {fileID: 11400000, guid: 01837860f33c4654cb370f10ef252750, type: 2}
+  - {fileID: 11400000, guid: 7ed9b30da1b229e43ad296942e031ac1, type: 2}
+  - {fileID: 11400000, guid: 2f9f7aa8fbfb8c14883e39372d476390, type: 2}
+  - {fileID: 11400000, guid: 75a04b707228483438597e834d4671e8, type: 2}
+  - {fileID: 11400000, guid: 79de527b21f63ab4fa3154557a25a7ac, type: 2}
+  - {fileID: 11400000, guid: cbf3c6bff58ac2445a5bcc92d8d33272, type: 2}
+  - {fileID: 11400000, guid: ca84a97155cb3944daed5b56ca9416ea, type: 2}
+  - {fileID: 11400000, guid: 70ed16d16573ea4408280247ec467a0a, type: 2}
+  - {fileID: 11400000, guid: 2f68871f91ad1ae41a530e2a6242d62b, type: 2}
+  - {fileID: 0}
+  autoLoadBlockAssets: 1
+  blockAssetsPath: Assets/Data/Blocks
+--- !u!114 &1993967622
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1993967619}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b751f49368e9b0a49b78ffadd6c563d9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  craftingTableFound: 0
+  craftingTableHasSprite: 0
+  debugInfo: 
+  totalBlocksInManager: 0
+  runDebugCheck: 0
+  forceRefreshManager: 0
 --- !u!1 &2112105359
 GameObject:
   m_ObjectHideFlags: 0
@@ -3107,10 +3111,11 @@ RectTransform:
   m_Children:
   - {fileID: 1752783397}
   - {fileID: 639936486}
-  - {fileID: 454117963}
   - {fileID: 525372850}
   - {fileID: 1465360961}
   - {fileID: 1417934848}
+  - {fileID: 1805047377}
+  - {fileID: 1993967620}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}

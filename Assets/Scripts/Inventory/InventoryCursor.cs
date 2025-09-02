@@ -96,7 +96,7 @@ public static class InventoryCursor
         
         // Main icon
         var image = cursorVisual.AddComponent<Image>();
-        image.sprite = GetSpriteForBlock(cursorStack.blockType);
+        image.sprite = BlockManager.GetBlockSprite(cursorStack.blockType);
         image.color = new Color(1f, 1f, 1f, 0.8f);
         image.raycastTarget = false;
         
@@ -135,7 +135,7 @@ public static class InventoryCursor
         var image = cursorVisual.GetComponent<Image>();
         if (image != null)
         {
-            image.sprite = GetSpriteForBlock(cursorStack.blockType);
+            image.sprite = BlockManager.GetBlockSprite(cursorStack.blockType);
         }
         
         // Update the count text
@@ -177,37 +177,4 @@ public static class InventoryCursor
         }
     }
     
-    static Sprite GetSpriteForBlock(BlockType type)
-    {
-        if (type == BlockType.Air) return null;
-        
-        Texture2D tex = null;
-        if ((int)type < BlockDatabase.blockTypes.Length)
-        {
-            tex = BlockDatabase.blockTypes[(int)type].blockTexture;
-        }
-        
-        if (tex == null)
-        {
-            var worldGenerator = Object.FindFirstObjectByType<WorldGenerator>();
-            if (worldGenerator != null)
-            {
-                switch (type)
-                {
-                    case BlockType.Grass: tex = worldGenerator.grassTexture; break;
-                    case BlockType.Dirt: tex = worldGenerator.dirtTexture; break;
-                    case BlockType.Stone: tex = worldGenerator.stoneTexture; break;
-                    case BlockType.Sand: tex = worldGenerator.sandTexture; break;
-                    case BlockType.Coal: tex = worldGenerator.coalTexture; break;
-                    case BlockType.Log: tex = worldGenerator.logTexture; break;
-                    case BlockType.Leaves: tex = worldGenerator.leavesTexture; break;
-                    case BlockType.WoodPlanks: tex = worldGenerator.woodPlanksTexture; break;
-                }
-            }
-        }
-        
-        if (tex == null) return null;
-        
-        return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 32f);
-    }
 }
