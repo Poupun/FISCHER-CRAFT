@@ -31,7 +31,8 @@ public class DroppedItem : MonoBehaviour
     private Vector3 baseScale;
     private float lifeTime = 0f;
     private Transform playerTransform;
-    private PlayerInventory playerInventory;
+    private PlayerInventory playerInventory; // Legacy
+    private UnifiedPlayerInventory unifiedInventory; // New unified system
     private Camera playerCamera;
     public bool isBeingPickedUp = false;
     public bool isHovered = false;
@@ -77,6 +78,10 @@ public class DroppedItem : MonoBehaviour
             playerInventory = player.GetComponent<PlayerInventory>();
             if (playerInventory == null)
                 playerInventory = FindFirstObjectByType<PlayerInventory>();
+            // Unified inventory
+            unifiedInventory = player.GetComponent<UnifiedPlayerInventory>();
+            if (unifiedInventory == null)
+                unifiedInventory = FindFirstObjectByType<UnifiedPlayerInventory>();
             
             // Get player camera
             playerCamera = player.GetComponentInChildren<Camera>();
@@ -321,9 +326,10 @@ public class DroppedItem : MonoBehaviour
             return;
         }
         
-        if (playerInventory == null)
+        // Ensure we have at least one inventory reference (prefer unified)
+        if (unifiedInventory == null && playerInventory == null)
         {
-            Debug.Log("DroppedItem: No playerInventory found, trying to find one");
+            Debug.Log("DroppedItem: No inventory references found, searching now");
             
             // Try multiple ways to find the player and inventory
             GameObject player = null;
@@ -371,20 +377,49 @@ public class DroppedItem : MonoBehaviour
             if (playerInventory == null)
             {
                 Debug.Log("DroppedItem: Still no playerInventory found after all attempts!");
+            }
+
+            // Try unified inventory too
+            if (unifiedInventory == null)
+            {
+                if (player != null)
+                    unifiedInventory = player.GetComponent<UnifiedPlayerInventory>();
+                if (unifiedInventory == null)
+                    unifiedInventory = FindFirstObjectByType<UnifiedPlayerInventory>();
+                Debug.Log($"DroppedItem: Unified inventory search result: {(unifiedInventory != null ? unifiedInventory.gameObject.name : "null")}");
+            }
+
+            if (unifiedInventory == null && playerInventory == null)
+            {
+                Debug.Log("DroppedItem: No inventory (legacy or unified) available. Aborting pickup.");
                 return;
             }
             else
             {
-                Debug.Log($"DroppedItem: Found playerInventory on GameObject: {playerInventory.gameObject.name}");
+                if (unifiedInventory != null)
+                    Debug.Log($"DroppedItem: Found unified inventory on {unifiedInventory.gameObject.name}");
+                if (playerInventory != null)
+                    Debug.Log($"DroppedItem: Found legacy playerInventory on GameObject: {playerInventory.gameObject.name}");
             }
         }
         
-        Debug.Log($"DroppedItem: Attempting to add {itemType} x{quantity} to inventory");
+        Debug.Log($"DroppedItem: Attempting to add {itemType} x{quantity} to inventory (prefer unified)");
+        bool wasPickedUp = false;
+
+        // Prefer unified inventory
+        if (unifiedInventory != null)
+        {
+            wasPickedUp = unifiedInventory.AddBlock(itemType, quantity);
+            Debug.Log($"DroppedItem: Unified AddBlock returned {wasPickedUp}");
+        }
+        else if (playerInventory != null)
+        {
+            wasPickedUp = playerInventory.AddItem(itemType, quantity);
+            Debug.Log($"DroppedItem: Legacy AddItem returned {wasPickedUp}");
+        }
         
-        // Try to add to inventory
-        bool wasPickedUp = playerInventory.AddItem(itemType, quantity);
-        
-        Debug.Log($"DroppedItem: AddItem returned {wasPickedUp}");
+        // NOTE: Both inventory systems return true only if fully added; partial adds leave remainder.
+        // Future improvement: adjust dropped quantity to remainder instead of all-or-nothing behaviour.
         
         if (wasPickedUp)
         {
@@ -430,8 +465,8 @@ public class DroppedItem : MonoBehaviour
         
         Debug.Log($"DroppedItem: PickupAnimation complete, destroying {itemType}");
         
-        // Destroy the item
-        Destroy(gameObject);
+    // Destroy the item (fully picked up)
+    Destroy(gameObject);
     }
     
     private IEnumerator DespawnAfterTime()

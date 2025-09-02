@@ -2460,6 +2460,7 @@ GameObject:
   - component: {fileID: 1634668432}
   - component: {fileID: 1634668435}
   - component: {fileID: 1634668436}
+  - component: {fileID: 1634668437}
   m_Layer: 0
   m_Name: PlayerCamera
   m_TagString: MainCamera
@@ -2654,6 +2655,107 @@ MonoBehaviour:
   swayAmount: 0.01
   maxSwayAmount: 0.03
   swaySmooth: 8
+--- !u!114 &1634668437
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1634668430}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1729f2b511855c54494efe9bc90c2619, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  inventory: {fileID: 1426170054}
+  miningSystem: {fileID: 1426170053}
+  playerController: {fileID: 1426170048}
+  blockLocalPosition: {x: 0.55, y: -0.55, z: 0.75}
+  blockLocalEuler: {x: 35, y: 225, z: 0}
+  blockScale: 0.4
+  idleBobAmplitude: 0.02
+  idleBobSpeed: 3
+  poseLerpSpeed: 10
+  enableSwing: 1
+  breakSwingDuration: 0.25
+  breakSwingAngle: 30
+  breakSwingCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  breakSwingOffset: {x: 0, y: -0.05, z: -0.05}
+  placeSwingDuration: 0.18
+  placeSwingAngle: 22
+  placeSwingCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  placeSwingOffset: {x: 0, y: -0.04, z: -0.03}
+  swingSmoothing: 1
+  swingAxis: {x: 0, y: 0, z: 1}
+  itemLocalPosition: {x: 0.58, y: -0.62, z: 0.72}
+  itemLocalEuler: {x: 3.23, y: 348.1, z: 21.1}
+  itemScale: 1
+  itemDepth: 0.04
+  sideDarken: 0.65
+  generateAccurateOutline: 1
+  perPixelExtrusion: 1
+  pixelAlphaThreshold: 0.1
+  maxVoxelSampleSize: 64
+  mergeHorizontalStrips: 1
+  cacheItemMeshes: 1
+  unlitItemMaterial: 1
+  forcePointFilter: 1
+  solidColorSides: 1
+  currentEntry:
+    entryType: 0
+    blockType: 2
+    itemType: 0
+    count: 16
+  shownBlock: 2
+  shownItem: 1000
+  autoFallbackOnUnreadableTexture: 1
+  logUnreadableTextureWarning: 1
 --- !u!1 &1736353492
 GameObject:
   m_ObjectHideFlags: 0

@@ -1,4 +1,5 @@
 using UnityEngine;
+using System;
 
 public class PlayerController : MonoBehaviour
 {
@@ -18,6 +19,9 @@ public class PlayerController : MonoBehaviour
 
     // Movement state
     private Vector3 velocity; private float xRotation = 0f; private bool isSprinting; private bool isCrouching; private float currentSpeed; private float baseFOV; private float targetHeight;
+
+    // Events
+    public event Action<BlockType, Vector3Int> OnBlockPlaced; // Fired when player successfully places a block
 
     // Target highlight removed
 
@@ -335,6 +339,7 @@ public class PlayerController : MonoBehaviour
                     Debug.Log($"PlayerController: Placing {placeType} at {pos}");
                     worldGenerator.PlaceBlock(pos, placeType); 
                     playerInventory.ConsumeOneFromSelected(); 
+                    OnBlockPlaced?.Invoke(placeType, pos);
                 } 
                 else
                 {
@@ -377,6 +382,7 @@ public class PlayerController : MonoBehaviour
                 Debug.Log($"PlayerController: Physics fallback - Placing {placeType} at {pos}");
                 worldGenerator.PlaceBlock(pos, placeType); 
                 playerInventory.ConsumeOneFromSelected(); 
+                OnBlockPlaced?.Invoke(placeType, pos);
             }
             else
             {
