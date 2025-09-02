@@ -182,13 +182,7 @@ public class BlockConfigurationGenerator
                 config.isMineable = true;
                 break;
                 
-            case BlockType.Stick:
-                config.hardness = 0.2f;
-                config.isUnbreakable = false;
-                config.isPlaceable = false; // Sticks are typically items, not placeable blocks
-                config.isCraftable = true;
-                config.isMineable = false; // Not mineable from world
-                break;
+            // Note: Stick is now ItemType.Stick, not BlockType.Stick
                 
             case BlockType.CraftingTable:
                 config.hasMultipleSides = true;

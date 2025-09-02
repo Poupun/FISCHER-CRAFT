@@ -14,7 +14,7 @@ public class PlayerController : MonoBehaviour
     public Vector3 dropOffset = new Vector3(0, 0.5f, 1f); // Offset from player position to drop items
 
     // Components
-    private CharacterController characterController; private Camera playerCamera; private WorldGenerator worldGenerator; private PlayerInventory playerInventory;
+    private CharacterController characterController; private Camera playerCamera; private WorldGenerator worldGenerator; private UnifiedPlayerInventory playerInventory;
 
     // Movement state
     private Vector3 velocity; private float xRotation = 0f; private bool isSprinting; private bool isCrouching; private float currentSpeed; private float baseFOV; private float targetHeight;
@@ -26,7 +26,7 @@ public class PlayerController : MonoBehaviour
         characterController = GetComponent<CharacterController>();
         playerCamera = GetComponentInChildren<Camera>();
         worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
-        playerInventory = GetComponent<PlayerInventory>() ?? gameObject.AddComponent<PlayerInventory>();
+        playerInventory = GetComponent<UnifiedPlayerInventory>() ?? gameObject.AddComponent<UnifiedPlayerInventory>();
         baseFOV = playerCamera.fieldOfView; targetHeight = standHeight; currentSpeed = walkSpeed; Cursor.lockState = CursorLockMode.Locked;
     }
 

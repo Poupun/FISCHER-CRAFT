@@ -150,13 +150,7 @@ public class FixBlockTextures : EditorWindow
                 }
                 break;
                 
-            case BlockType.Stick:
-                if (config.mainTexture == null)
-                {
-                    config.mainTexture = LoadTexture("Assets/Textures/item/stick.png");
-                    wasFixed = true;
-                }
-                break;
+            // Note: Stick texture is now handled by ItemManager, not BlockManager
                 
             case BlockType.CraftingTable:
                 if (config.mainTexture == null)

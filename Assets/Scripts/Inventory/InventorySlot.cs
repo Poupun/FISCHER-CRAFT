@@ -15,9 +15,21 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     public Color highlightColor = Color.yellow;
     public int slotIndex;
     
-    private PlayerInventory inventory;
-    private ItemStack currentStack;
+    private UnifiedPlayerInventory inventory;
+    private InventoryEntry currentEntry;
     private Canvas parentCanvas;
+    
+    // Temporary compatibility property for migration  
+    private ItemStack currentStack 
+    {
+        get 
+        {
+            if (currentEntry.entryType == InventoryEntryType.Block)
+                return new ItemStack(currentEntry.blockType, currentEntry.count);
+            else
+                return new ItemStack(BlockType.Air, 0); // Items show as empty for compatibility
+        }
+    }
     
     void Start()
     {
@@ -46,7 +58,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         }
         
         if (inventory == null)
-            inventory = FindFirstObjectByType<PlayerInventory>();
+            inventory = FindFirstObjectByType<UnifiedPlayerInventory>();
             
         if (parentCanvas == null)
             parentCanvas = GetComponentInParent<Canvas>();
@@ -73,23 +85,23 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     {
         if (inventory == null) return;
         
-        currentStack = inventory.GetSlot(slotIndex);
+        currentEntry = inventory.GetSlot(slotIndex);
         
         // For hotbar slots, let HotbarUI handle the visual updates
         // For other slots, handle the updates here using the same logic as HotbarUI
         if (!inventory.IsHotbarSlot(slotIndex))
         {
-            // Handle Icon component only - assign block sprites (same as HotbarUI)
+            // Handle Icon component - assign sprites for both blocks and items
             if (icon != null)
             {
-                if (currentStack.IsEmpty)
+                if (currentEntry.IsEmpty)
                 {
                     icon.enabled = false;
                 }
                 else
                 {
                     icon.enabled = true;
-                    icon.sprite = BlockManager.GetBlockSprite(currentStack.blockType);
+                    icon.sprite = currentEntry.GetSprite(); // Use the unified sprite method
                     icon.color = Color.white;
                     icon.preserveAspect = true;  // Match HotbarUI setting
                 }
@@ -98,13 +110,13 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
             // Handle count text (same logic as HotbarUI)
             if (countText != null)
             {
-                if (currentStack.IsEmpty)
+                if (currentEntry.IsEmpty)
                 {
                     countText.text = string.Empty;  // Match HotbarUI
                 }
                 else
                 {
-                    countText.text = (currentStack.count > 1 ? currentStack.count.ToString() : string.Empty);  // Match HotbarUI logic
+                    countText.text = (currentEntry.count > 1 ? currentEntry.count.ToString() : string.Empty);  // Match HotbarUI logic
                 }
             }
             
@@ -129,14 +141,14 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         }
         
         // Handle regular inventory interactions first (picking up/placing items)
-        if (!currentStack.IsEmpty || InventoryCursor.HasItem())
+        if (!currentEntry.IsEmpty || InventoryCursor.HasItem())
         {
             HandleInventoryClick(eventData);
             return;
         }
         
         // Handle hotbar selection only for empty hotbar slots when cursor is empty
-        if (inventory.IsHotbarSlot(slotIndex) && currentStack.IsEmpty && !InventoryCursor.HasItem())
+        if (inventory.IsHotbarSlot(slotIndex) && currentEntry.IsEmpty && !InventoryCursor.HasItem())
         {
             inventory.SetSelectedIndex(slotIndex);
             return;
@@ -146,7 +158,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     void HandleResultSlotClick(PointerEventData eventData)
     {
         var craftingManager = FindFirstObjectByType<CraftingManager>();
-        if (craftingManager == null || currentStack.IsEmpty) return;
+        if (craftingManager == null || currentEntry.IsEmpty) return;
         
         bool isShiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
         
@@ -160,7 +172,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
             else if (!InventoryCursor.HasItem())
             {
                 // Regular left click: pick up result items to cursor
-                InventoryCursor.SetCursorStack(new ItemStack(currentStack.blockType, currentStack.count));
+                InventoryCursor.SetCursorEntry(currentEntry);
                 
                 // Consume materials and clear result
                 craftingManager.ConsumeCraftingMaterials();
@@ -171,7 +183,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
                 
                 // Animation handled by InventoryCursor system
             }
-            else if (InventoryCursor.HasItem() && InventoryCursor.GetCursorStack().blockType == currentStack.blockType)
+            else if (InventoryCursor.HasItem() && InventoryCursor.GetCursorEntry().CanStackWith(currentEntry))
             {
                 // Left click with compatible items in cursor: stack more crafted items
                 HandleStackCrafting(craftingManager);
@@ -186,10 +198,12 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         int craftCount = 0;
         int maxCrafts = 64; // Safety limit to prevent infinite loops
         
-        while (craftCount < maxCrafts && !currentStack.IsEmpty && CanCraftMore(craftingManager))
+        while (craftCount < maxCrafts && !currentEntry.IsEmpty && CanCraftMore(craftingManager))
         {
             // Try to add result to inventory
-            if (inventory.AddBlock(currentStack.blockType, currentStack.count))
+            if (currentEntry.entryType == InventoryEntryType.Block ? 
+                inventory.AddBlock(currentEntry.blockType, currentEntry.count) :
+                inventory.AddItem(currentEntry.itemType, currentEntry.count))
             {
                 // Successfully added to inventory, consume materials
                 craftingManager.ConsumeCraftingMaterials();
@@ -209,14 +223,21 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     void HandleStackCrafting(CraftingManager craftingManager)
     {
         // Try to add more crafted items to cursor stack
-        var cursorStack = InventoryCursor.GetCursorStack();
-        int spaceAvailable = ItemStack.MaxStackSize - cursorStack.count;
-        int canAdd = Mathf.Min(spaceAvailable, currentStack.count);
+        var cursorEntry = InventoryCursor.GetCursorEntry();
+        int spaceAvailable = ItemStack.MaxStackSize - cursorEntry.count;
+        int canAdd = Mathf.Min(spaceAvailable, currentEntry.count);
         
         if (canAdd > 0)
         {
             // Add to cursor stack
-            InventoryCursor.SetCursorStack(new ItemStack(cursorStack.blockType, cursorStack.count + canAdd));
+            var newEntry = new InventoryEntry
+            {
+                entryType = cursorEntry.entryType,
+                blockType = cursorEntry.blockType,
+                itemType = cursorEntry.itemType,
+                count = cursorEntry.count + canAdd
+            };
+            InventoryCursor.SetCursorEntry(newEntry);
             
             // Consume materials and check for new recipe
             craftingManager.ConsumeCraftingMaterials();
@@ -226,14 +247,14 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     
     bool CanCraftMore(CraftingManager craftingManager)
     {
-        // Check if we have enough materials for another craft
-        // For the log->planks recipe, we need at least 1 log
+        // Check if we have enough materials for another craft by checking if any recipe is still valid
+        // This is more generic than hardcoding specific materials
         for (int i = 0; i < 4; i++) // 4 crafting slots
         {
             var slot = craftingManager.GetCraftingSlot(i);
-            if (slot.blockType == BlockType.Log && slot.count > 0)
+            if (!slot.IsEmpty && slot.count > 0)
             {
-                return true; // Found at least 1 log
+                return true; // Found materials that could potentially make more
             }
         }
         return false;
@@ -262,15 +283,15 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     
     void HandleLeftClick()
     {
-        var cursorStack = InventoryCursor.GetCursorStack();
+        var cursorEntry = InventoryCursor.GetCursorEntry();
         
         if (!InventoryCursor.HasItem())
         {
             // Pick up entire stack
-            if (!currentStack.IsEmpty)
+            if (!currentEntry.IsEmpty)
             {
-                InventoryCursor.SetCursorStack(currentStack);
-                inventory.SetSlot(slotIndex, new ItemStack());
+                InventoryCursor.SetCursorEntry(currentEntry);
+                inventory.SetSlot(slotIndex, InventoryEntry.Empty);
                 
                 // Animation handled by InventoryCursor system
             }
@@ -278,62 +299,104 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         else
         {
             // Place entire cursor stack
-            if (currentStack.IsEmpty)
+            if (currentEntry.IsEmpty)
             {
                 // Empty slot - place all cursor items
-                inventory.SetSlot(slotIndex, cursorStack);
+                string entryDesc = cursorEntry.entryType == InventoryEntryType.Block ? cursorEntry.blockType.ToString() : cursorEntry.itemType.ToString();
+                Debug.Log($"InventorySlot: Placing {entryDesc} x{cursorEntry.count} in slot {slotIndex}");
+                inventory.SetSlot(slotIndex, cursorEntry);
                 InventoryCursor.Clear();
             }
-            else if (currentStack.blockType == cursorStack.blockType)
+            else if (currentEntry.CanStackWith(cursorEntry))
             {
                 // Same type - try to merge stacks
-                int spaceAvailable = ItemStack.MaxStackSize - currentStack.count;
-                int toAdd = Mathf.Min(spaceAvailable, cursorStack.count);
+                int maxStack = currentEntry.entryType == InventoryEntryType.Block ? 
+                               ItemStack.MaxStackSize : 
+                               ItemManager.GetMaxStackSize(currentEntry.itemType);
+                int spaceAvailable = maxStack - currentEntry.count;
+                int toAdd = Mathf.Min(spaceAvailable, cursorEntry.count);
+                
+                Debug.Log($"InventorySlot: Stacking - current has {currentEntry.count}, cursor has {cursorEntry.count}, space = {spaceAvailable}, adding = {toAdd}");
                 
                 if (toAdd > 0)
                 {
-                    inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count + toAdd));
+                    var mergedEntry = new InventoryEntry
+                    {
+                        entryType = currentEntry.entryType,
+                        blockType = currentEntry.blockType,
+                        itemType = currentEntry.itemType,
+                        count = currentEntry.count + toAdd
+                    };
+                    inventory.SetSlot(slotIndex, mergedEntry);
                     
-                    if (cursorStack.count <= toAdd)
+                    if (cursorEntry.count <= toAdd)
                     {
                         InventoryCursor.Clear();
                     }
                     else
                     {
-                        InventoryCursor.SetCursorStack(new ItemStack(cursorStack.blockType, cursorStack.count - toAdd));
+                        var remainingEntry = new InventoryEntry
+                        {
+                            entryType = cursorEntry.entryType,
+                            blockType = cursorEntry.blockType,
+                            itemType = cursorEntry.itemType,
+                            count = cursorEntry.count - toAdd
+                        };
+                        InventoryCursor.SetCursorEntry(remainingEntry);
                     }
                 }
             }
             else
             {
                 // Different types - swap stacks
-                var slotStackCopy = new ItemStack(currentStack.blockType, currentStack.count);
-                inventory.SetSlot(slotIndex, cursorStack);
-                InventoryCursor.SetCursorStack(slotStackCopy);
+                var slotEntryCopy = new InventoryEntry
+                {
+                    entryType = currentEntry.entryType,
+                    blockType = currentEntry.blockType,
+                    itemType = currentEntry.itemType,
+                    count = currentEntry.count
+                };
+                inventory.SetSlot(slotIndex, cursorEntry);
+                InventoryCursor.SetCursorEntry(slotEntryCopy);
             }
         }
     }
     
     void HandleRightClick()
     {
-        var cursorStack = InventoryCursor.GetCursorStack();
+        var cursorEntry = InventoryCursor.GetCursorEntry();
         
         if (!InventoryCursor.HasItem())
         {
             // Pick up half stack (or split stack)
-            if (!currentStack.IsEmpty && currentStack.count > 1)
+            if (!currentEntry.IsEmpty && currentEntry.count > 1)
             {
-                int halfCount = Mathf.CeilToInt(currentStack.count / 2f);
-                InventoryCursor.SetCursorStack(new ItemStack(currentStack.blockType, halfCount));
-                inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - halfCount));
+                int halfCount = Mathf.CeilToInt(currentEntry.count / 2f);
+                var halfEntry = new InventoryEntry
+                {
+                    entryType = currentEntry.entryType,
+                    blockType = currentEntry.blockType,
+                    itemType = currentEntry.itemType,
+                    count = halfCount
+                };
+                InventoryCursor.SetCursorEntry(halfEntry);
+                
+                var remainingEntry = new InventoryEntry
+                {
+                    entryType = currentEntry.entryType,
+                    blockType = currentEntry.blockType,
+                    itemType = currentEntry.itemType,
+                    count = currentEntry.count - halfCount
+                };
+                inventory.SetSlot(slotIndex, remainingEntry);
                 
                 // Animation handled by InventoryCursor system
             }
-            else if (!currentStack.IsEmpty)
+            else if (!currentEntry.IsEmpty)
             {
                 // Single item - pick it up
-                InventoryCursor.SetCursorStack(currentStack);
-                inventory.SetSlot(slotIndex, new ItemStack());
+                InventoryCursor.SetCursorEntry(currentEntry);
+                inventory.SetSlot(slotIndex, InventoryEntry.Empty);
                 
                 // Animation handled by InventoryCursor system
             }
@@ -341,34 +404,65 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         else
         {
             // Place single item from cursor
-            if (currentStack.IsEmpty)
+            if (currentEntry.IsEmpty)
             {
                 // Empty slot - place one item
-                inventory.SetSlot(slotIndex, new ItemStack(cursorStack.blockType, 1));
+                var singleEntry = new InventoryEntry
+                {
+                    entryType = cursorEntry.entryType,
+                    blockType = cursorEntry.blockType,
+                    itemType = cursorEntry.itemType,
+                    count = 1
+                };
+                inventory.SetSlot(slotIndex, singleEntry);
                 
-                if (cursorStack.count <= 1)
+                if (cursorEntry.count <= 1)
                 {
                     InventoryCursor.Clear();
                 }
                 else
                 {
-                    InventoryCursor.SetCursorStack(new ItemStack(cursorStack.blockType, cursorStack.count - 1));
+                    var remainingEntry = new InventoryEntry
+                    {
+                        entryType = cursorEntry.entryType,
+                        blockType = cursorEntry.blockType,
+                        itemType = cursorEntry.itemType,
+                        count = cursorEntry.count - 1
+                    };
+                    InventoryCursor.SetCursorEntry(remainingEntry);
                 }
             }
-            else if (currentStack.blockType == cursorStack.blockType)
+            else if (currentEntry.CanStackWith(cursorEntry))
             {
                 // Same type - add one if space available
-                if (currentStack.count < ItemStack.MaxStackSize)
+                int maxStack = currentEntry.entryType == InventoryEntryType.Block ? 
+                               ItemStack.MaxStackSize : 
+                               ItemManager.GetMaxStackSize(currentEntry.itemType);
+                if (currentEntry.count < maxStack)
                 {
-                    inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count + 1));
+                    var incrementedEntry = new InventoryEntry
+                    {
+                        entryType = currentEntry.entryType,
+                        blockType = currentEntry.blockType,
+                        itemType = currentEntry.itemType,
+                        count = currentEntry.count + 1
+                    };
+                    inventory.SetSlot(slotIndex, incrementedEntry);
                     
-                    if (cursorStack.count <= 1)
+                    if (cursorEntry.count <= 1)
                     {
                         InventoryCursor.Clear();
                     }
                     else
                     {
-                        InventoryCursor.SetCursorStack(new ItemStack(cursorStack.blockType, cursorStack.count - 1));
+                        var remainingEntry = new InventoryEntry
+                        {
+                            entryType = cursorEntry.entryType,
+                            blockType = cursorEntry.blockType,
+                            itemType = cursorEntry.itemType,
+                            count = cursorEntry.count - 1
+                        };
+                        InventoryCursor.SetCursorEntry(remainingEntry);
                     }
                 }
             }
@@ -377,7 +471,7 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     
     void HandleQuickTransfer()
     {
-        if (currentStack.IsEmpty) return;
+        if (currentEntry.IsEmpty) return;
         
         // Determine target inventory section based on current slot
         if (inventory.IsHotbarSlot(slotIndex))
@@ -402,23 +496,40 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         // Try to merge with existing stacks first
         for (int i = 0; i < inventory.hotbar.Length; i++)
         {
-            var hotbarStack = inventory.hotbar[i];
-            if (!hotbarStack.IsEmpty && hotbarStack.blockType == currentStack.blockType)
+            var hotbarEntry = inventory.hotbar[i];
+            if (!hotbarEntry.IsEmpty && hotbarEntry.CanStackWith(currentEntry))
             {
-                int spaceAvailable = ItemStack.MaxStackSize - hotbarStack.count;
+                int maxStack = hotbarEntry.entryType == InventoryEntryType.Block ? 
+                               ItemStack.MaxStackSize : 
+                               ItemManager.GetMaxStackSize(hotbarEntry.itemType);
+                int spaceAvailable = maxStack - hotbarEntry.count;
                 if (spaceAvailable > 0)
                 {
-                    int toTransfer = Mathf.Min(spaceAvailable, currentStack.count);
-                    inventory.SetSlot(i, new ItemStack(hotbarStack.blockType, hotbarStack.count + toTransfer));
-                    
-                    if (currentStack.count <= toTransfer)
+                    int toTransfer = Mathf.Min(spaceAvailable, currentEntry.count);
+                    var mergedEntry = new InventoryEntry
                     {
-                        inventory.SetSlot(slotIndex, new ItemStack());
+                        entryType = hotbarEntry.entryType,
+                        blockType = hotbarEntry.blockType,
+                        itemType = hotbarEntry.itemType,
+                        count = hotbarEntry.count + toTransfer
+                    };
+                    inventory.SetSlot(i, mergedEntry);
+                    
+                    if (currentEntry.count <= toTransfer)
+                    {
+                        inventory.SetSlot(slotIndex, InventoryEntry.Empty);
                         return true;
                     }
                     else
                     {
-                        inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - toTransfer));
+                        var remainingEntry = new InventoryEntry
+                        {
+                            entryType = currentEntry.entryType,
+                            blockType = currentEntry.blockType,
+                            itemType = currentEntry.itemType,
+                            count = currentEntry.count - toTransfer
+                        };
+                        inventory.SetSlot(slotIndex, remainingEntry);
                         return true;
                     }
                 }
@@ -430,8 +541,8 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         {
             if (inventory.hotbar[i].IsEmpty)
             {
-                inventory.SetSlot(i, currentStack);
-                inventory.SetSlot(slotIndex, new ItemStack());
+                inventory.SetSlot(i, currentEntry);
+                inventory.SetSlot(slotIndex, InventoryEntry.Empty);
                 return true;
             }
         }
@@ -442,25 +553,42 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     bool TryTransferToMainInventory()
     {
         // Try to merge with existing stacks first
-        for (int i = inventory.hotbar.Length; i < inventory.mainInventorySize; i++)
+        for (int i = inventory.hotbar.Length; i < inventory.hotbar.Length + inventory.mainInventorySize; i++)
         {
-            var mainStack = inventory.GetSlot(i);
-            if (!mainStack.IsEmpty && mainStack.blockType == currentStack.blockType)
+            var mainEntry = inventory.GetSlot(i);
+            if (!mainEntry.IsEmpty && mainEntry.CanStackWith(currentEntry))
             {
-                int spaceAvailable = ItemStack.MaxStackSize - mainStack.count;
+                int maxStack = mainEntry.entryType == InventoryEntryType.Block ? 
+                               ItemStack.MaxStackSize : 
+                               ItemManager.GetMaxStackSize(mainEntry.itemType);
+                int spaceAvailable = maxStack - mainEntry.count;
                 if (spaceAvailable > 0)
                 {
-                    int toTransfer = Mathf.Min(spaceAvailable, currentStack.count);
-                    inventory.SetSlot(i, new ItemStack(mainStack.blockType, mainStack.count + toTransfer));
-                    
-                    if (currentStack.count <= toTransfer)
+                    int toTransfer = Mathf.Min(spaceAvailable, currentEntry.count);
+                    var mergedEntry = new InventoryEntry
                     {
-                        inventory.SetSlot(slotIndex, new ItemStack());
+                        entryType = mainEntry.entryType,
+                        blockType = mainEntry.blockType,
+                        itemType = mainEntry.itemType,
+                        count = mainEntry.count + toTransfer
+                    };
+                    inventory.SetSlot(i, mergedEntry);
+                    
+                    if (currentEntry.count <= toTransfer)
+                    {
+                        inventory.SetSlot(slotIndex, InventoryEntry.Empty);
                         return true;
                     }
                     else
                     {
-                        inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - toTransfer));
+                        var remainingEntry = new InventoryEntry
+                        {
+                            entryType = currentEntry.entryType,
+                            blockType = currentEntry.blockType,
+                            itemType = currentEntry.itemType,
+                            count = currentEntry.count - toTransfer
+                        };
+                        inventory.SetSlot(slotIndex, remainingEntry);
                         return true;
                     }
                 }
@@ -468,13 +596,13 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         }
         
         // Try to find empty slot
-        for (int i = inventory.hotbar.Length; i < inventory.mainInventorySize; i++)
+        for (int i = inventory.hotbar.Length; i < inventory.hotbar.Length + inventory.mainInventorySize; i++)
         {
-            var mainStack = inventory.GetSlot(i);
-            if (mainStack.IsEmpty)
+            var mainEntry = inventory.GetSlot(i);
+            if (mainEntry.IsEmpty)
             {
-                inventory.SetSlot(i, currentStack);
-                inventory.SetSlot(slotIndex, new ItemStack());
+                inventory.SetSlot(i, currentEntry);
+                inventory.SetSlot(slotIndex, InventoryEntry.Empty);
                 return true;
             }
         }
@@ -485,25 +613,43 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     bool TryTransferToCrafting()
     {
         // Only transfer to crafting input slots (36-39), not result slot (40)
-        for (int i = 36; i < 40; i++)
+        int craftingStartIndex = inventory.hotbar.Length + inventory.mainInventorySize;
+        for (int i = craftingStartIndex; i < craftingStartIndex + 4; i++)
         {
-            var craftingStack = inventory.GetSlot(i);
-            if (!craftingStack.IsEmpty && craftingStack.blockType == currentStack.blockType)
+            var craftingEntry = inventory.GetSlot(i);
+            if (!craftingEntry.IsEmpty && craftingEntry.CanStackWith(currentEntry))
             {
-                int spaceAvailable = ItemStack.MaxStackSize - craftingStack.count;
+                int maxStack = craftingEntry.entryType == InventoryEntryType.Block ? 
+                               ItemStack.MaxStackSize : 
+                               ItemManager.GetMaxStackSize(craftingEntry.itemType);
+                int spaceAvailable = maxStack - craftingEntry.count;
                 if (spaceAvailable > 0)
                 {
-                    int toTransfer = Mathf.Min(spaceAvailable, currentStack.count);
-                    inventory.SetSlot(i, new ItemStack(craftingStack.blockType, craftingStack.count + toTransfer));
-                    
-                    if (currentStack.count <= toTransfer)
+                    int toTransfer = Mathf.Min(spaceAvailable, currentEntry.count);
+                    var mergedEntry = new InventoryEntry
                     {
-                        inventory.SetSlot(slotIndex, new ItemStack());
+                        entryType = craftingEntry.entryType,
+                        blockType = craftingEntry.blockType,
+                        itemType = craftingEntry.itemType,
+                        count = craftingEntry.count + toTransfer
+                    };
+                    inventory.SetSlot(i, mergedEntry);
+                    
+                    if (currentEntry.count <= toTransfer)
+                    {
+                        inventory.SetSlot(slotIndex, InventoryEntry.Empty);
                         return true;
                     }
                     else
                     {
-                        inventory.SetSlot(slotIndex, new ItemStack(currentStack.blockType, currentStack.count - toTransfer));
+                        var remainingEntry = new InventoryEntry
+                        {
+                            entryType = currentEntry.entryType,
+                            blockType = currentEntry.blockType,
+                            itemType = currentEntry.itemType,
+                            count = currentEntry.count - toTransfer
+                        };
+                        inventory.SetSlot(slotIndex, remainingEntry);
                         return true;
                     }
                 }
@@ -511,13 +657,13 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
         }
         
         // Try to find empty crafting slot
-        for (int i = 36; i < 40; i++)
+        for (int i = craftingStartIndex; i < craftingStartIndex + 4; i++)
         {
-            var craftingStack = inventory.GetSlot(i);
-            if (craftingStack.IsEmpty)
+            var craftingEntry = inventory.GetSlot(i);
+            if (craftingEntry.IsEmpty)
             {
-                inventory.SetSlot(i, currentStack);
-                inventory.SetSlot(slotIndex, new ItemStack());
+                inventory.SetSlot(i, currentEntry);
+                inventory.SetSlot(slotIndex, InventoryEntry.Empty);
                 return true;
             }
         }

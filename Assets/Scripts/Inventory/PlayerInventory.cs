@@ -47,7 +47,8 @@ public class PlayerInventory : MonoBehaviour
         AddBlock(BlockType.Stone, 32);
         AddBlock(BlockType.Dirt, 16);
         AddBlock(BlockType.Log, 8);
-        AddBlock(BlockType.Stick, 16);
+        // TODO: Update to use new unified inventory system
+        // AddItem(ItemType.Stick, 16); // Now should be ItemType.Stick
         AddBlock(BlockType.CraftingTable, 2);
     }
 

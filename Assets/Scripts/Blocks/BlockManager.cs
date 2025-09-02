@@ -309,7 +309,6 @@ public class BlockManager : MonoBehaviour
                     case BlockType.Log: tex = worldGenerator.logTexture; break;
                     case BlockType.Leaves: tex = worldGenerator.leavesTexture; break;
                     case BlockType.WoodPlanks: tex = worldGenerator.woodPlanksTexture; break;
-                    case BlockType.Stick: tex = worldGenerator.stickTexture; break;
                     case BlockType.CraftingTable: tex = worldGenerator.craftingTableTexture; break;
                 }
             }

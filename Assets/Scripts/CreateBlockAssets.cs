@@ -30,7 +30,7 @@ public class CreateBlockAssets : MonoBehaviour
         CreateBlockAsset(BlockType.Diamond, "Diamond Ore", 1.5f, false, false, true, false, true);
         CreateBlockAsset(BlockType.Water, "Water", 0f, false, true, false, false, false);
         CreateBlockAsset(BlockType.WoodPlanks, "Wood Planks", 0.8f, false, false, true, true, true);
-        CreateBlockAsset(BlockType.Stick, "Stick", 0.2f, false, false, false, true, false);
+        // Note: Stick is now an ItemType, not BlockType
         CreateBlockAsset(BlockType.CraftingTable, "Crafting Table", 0.8f, true, false, true, true, true);
         
         AssetDatabase.SaveAssets();
@@ -153,9 +153,7 @@ public class CreateBlockAssets : MonoBehaviour
                 case BlockType.Gravel:
                     config.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/gravel.png");
                     break;
-                case BlockType.Stick:
-                    config.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/item/stick.png");
-                    break;
+                // Note: Stick texture is now handled by ItemManager, not BlockManager
             }
         }
         

@@ -69,7 +69,6 @@ public class WorldGenerator : MonoBehaviour
     public Texture2D ironTexture;
     public Texture2D goldTexture;
     public Texture2D diamondTexture;
-    public Texture2D stickTexture;
     public Texture2D craftingTableTexture;
     public Texture2D craftingTableFrontTexture;
     public Texture2D craftingTableSideTexture;
@@ -828,7 +827,6 @@ public class WorldGenerator : MonoBehaviour
             case BlockType.Log: return logTexture;
             case BlockType.Leaves: return leavesTexture;
             case BlockType.WoodPlanks: return woodPlanksTexture;
-            case BlockType.Stick: return stickTexture;
             case BlockType.CraftingTable: return craftingTableTexture;
             case BlockType.Bedrock: return bedrockTexture;
             case BlockType.Gravel: return gravelTexture;
@@ -940,7 +938,25 @@ public class WorldGenerator : MonoBehaviour
     // Public accessor for chunk mesh builder
     public Material GetBlockMaterial(BlockType t)
     {
-        return blockMaterials != null ? blockMaterials[(int)t] : null;
+        if (blockMaterials == null) return null;
+        
+        int blockIndex = (int)t;
+        
+        // Migration: Handle old saved BlockType values after Stick removal
+        if (blockIndex == 16) // Old CraftingTable value
+        {
+            Debug.Log($"Migrating old BlockType value 16 (CraftingTable) to new value 15");
+            blockIndex = 15; // New CraftingTable value
+            t = BlockType.CraftingTable;
+        }
+        
+        if (blockIndex < 0 || blockIndex >= blockMaterials.Length)
+        {
+            Debug.LogWarning($"BlockType {t} (index {blockIndex}) is out of bounds for blockMaterials array (length {blockMaterials.Length})");
+            return null;
+        }
+        
+        return blockMaterials[blockIndex];
     }
 
     // Returns the material to use for a particular face of a block.
