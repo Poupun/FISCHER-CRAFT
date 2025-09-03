@@ -3,14 +3,29 @@ using System.Collections.Generic;
 
 public class CraftingManager : MonoBehaviour
 {
-    [Header("Crafting Slots Configuration")]
-    public int craftingStartIndex = 36; // Start index for crafting slots in inventory system (hotbar + main inventory)
-    public int craftingSlotCount = 4; // 2x2 crafting grid
-    public int resultSlotIndex = 40; // Index for result slot
+    [Header("Player Crafting Slots Configuration (2x2)")]
+    public int playerCraftingStartIndex = 36; // Start index for 2x2 player crafting slots
+    public int playerCraftingSlotCount = 4; // 2x2 crafting grid
+    public int playerResultSlotIndex = 40; // Index for 2x2 result slot
+    
+    [Header("Table Crafting Slots Configuration (3x3)")]
+    public int tableCraftingStartIndex = 41; // Start index for 3x3 table crafting slots
+    public int tableCraftingSlotCount = 9; // 3x3 crafting grid
+    public int tableResultSlotIndex = 50; // Index for 3x3 result slot
+    
+    [Header("Current Mode")]
+    [HideInInspector]
+    public bool useTableCrafting = false; // Toggle between 2x2 and 3x3 mode
     
     private UnifiedPlayerInventory playerInventory;
     private ItemStack currentResult;
     private bool isUpdatingRecipe = false;
+    
+    // Helper properties for current mode
+    private int CurrentCraftingStartIndex => useTableCrafting ? tableCraftingStartIndex : playerCraftingStartIndex;
+    private int CurrentCraftingSlotCount => useTableCrafting ? tableCraftingSlotCount : playerCraftingSlotCount;
+    private int CurrentResultSlotIndex => useTableCrafting ? tableResultSlotIndex : playerResultSlotIndex;
+    private int CurrentGridSize => useTableCrafting ? 3 : 2;
     
     void Start()
     {
@@ -82,6 +97,13 @@ public class CraftingManager : MonoBehaviour
         }
     }
     
+    public void SetCraftingMode(bool useTable)
+    {
+        useTableCrafting = useTable;
+        Debug.Log($"CraftingManager: Crafting mode set to {(useTable ? "3x3 Table" : "2x2 Player")}");
+        CheckForValidRecipe(); // Recalculate recipe with new mode
+    }
+    
     void InitializeDefaultRecipes()
     {
         // For now, we'll use a simple hardcoded check instead of ScriptableObject recipes
@@ -142,16 +164,28 @@ public class CraftingManager : MonoBehaviour
             return new ItemStack(BlockType.CraftingTable, 1);
         }
         
+        // 3x3 Table-only recipes (only available when using table crafting)
+        if (useTableCrafting && CurrentGridSize == 3)
+        {
+            // Recipe 4: Chest Recipe (8 wood planks around edges, center empty)
+            if (CheckChestRecipe(pattern))
+            {
+                Debug.Log("CraftingManager: Chest recipe detected!");
+                return new ItemStack(BlockType.Log, 1); // Placeholder - should be chest when you have that block type
+            }
+        }
+        
         return new ItemStack(); // No valid recipe
     }
     
     bool CheckSingleItemRecipe(BlockType[,] pattern, BlockType requiredItem, int requiredCount)
     {
         int itemCount = 0;
+        int gridSize = CurrentGridSize;
         
-        for (int x = 0; x < 2; x++)
+        for (int x = 0; x < gridSize; x++)
         {
-            for (int y = 0; y < 2; y++)
+            for (int y = 0; y < gridSize; y++)
             {
                 if (pattern[x, y] == requiredItem)
                 {
@@ -171,26 +205,58 @@ public class CraftingManager : MonoBehaviour
     
     bool CheckStickRecipe(BlockType[,] pattern)
     {
+        int gridSize = CurrentGridSize;
+        
         // Debug: Print current crafting pattern
-        Debug.Log($"CraftingManager.CheckStickRecipe: Pattern = [{pattern[0,0]}, {pattern[1,0]}] / [{pattern[0,1]}, {pattern[1,1]}]");
-        
-        // Check for vertical arrangement: two wood planks vertically aligned
-        // Pattern should be: WoodPlanks on (0,0) and (0,1) OR (1,0) and (1,1)
-        
-        // Check left column (x=0)
-        if (pattern[0, 0] == BlockType.WoodPlanks && pattern[0, 1] == BlockType.WoodPlanks &&
-            pattern[1, 0] == BlockType.Air && pattern[1, 1] == BlockType.Air)
+        if (gridSize == 2)
         {
-            Debug.Log("CraftingManager.CheckStickRecipe: Found stick recipe in left column!");
-            return true;
+            Debug.Log($"CraftingManager.CheckStickRecipe: 2x2 Pattern = [{pattern[0,0]}, {pattern[1,0]}] / [{pattern[0,1]}, {pattern[1,1]}]");
+        }
+        else
+        {
+            Debug.Log($"CraftingManager.CheckStickRecipe: 3x3 Pattern = [{pattern[0,0]}, {pattern[1,0]}, {pattern[2,0]}] / [{pattern[0,1]}, {pattern[1,1]}, {pattern[2,1]}] / [{pattern[0,2]}, {pattern[1,2]}, {pattern[2,2]}]");
         }
         
-        // Check right column (x=1)  
-        if (pattern[1, 0] == BlockType.WoodPlanks && pattern[1, 1] == BlockType.WoodPlanks &&
-            pattern[0, 0] == BlockType.Air && pattern[0, 1] == BlockType.Air)
+        // Check for vertical arrangement: two wood planks vertically aligned
+        // For 3x3 grid, check all possible columns
+        for (int col = 0; col < gridSize; col++)
         {
-            Debug.Log("CraftingManager.CheckStickRecipe: Found stick recipe in right column!");
-            return true;
+            // Check if this column has the stick pattern and all other slots are empty
+            bool hasStickPattern = false;
+            
+            // Check for vertical stick pattern in this column
+            for (int startRow = 0; startRow <= gridSize - 2; startRow++)
+            {
+                if (pattern[col, startRow] == BlockType.WoodPlanks && 
+                    pattern[col, startRow + 1] == BlockType.WoodPlanks)
+                {
+                    // Found potential stick pattern, now check if all other slots are empty
+                    bool allOtherSlotsEmpty = true;
+                    
+                    for (int x = 0; x < gridSize; x++)
+                    {
+                        for (int y = 0; y < gridSize; y++)
+                        {
+                            // Skip the two slots that should have wood planks
+                            if (x == col && (y == startRow || y == startRow + 1))
+                                continue;
+                                
+                            if (pattern[x, y] != BlockType.Air)
+                            {
+                                allOtherSlotsEmpty = false;
+                                break;
+                            }
+                        }
+                        if (!allOtherSlotsEmpty) break;
+                    }
+                    
+                    if (allOtherSlotsEmpty)
+                    {
+                        Debug.Log($"CraftingManager.CheckStickRecipe: Found stick recipe in column {col}, rows {startRow}-{startRow + 1}!");
+                        return true;
+                    }
+                }
+            }
         }
         
         Debug.Log("CraftingManager.CheckStickRecipe: No stick recipe found");
@@ -199,28 +265,115 @@ public class CraftingManager : MonoBehaviour
     
     bool CheckCraftingTableRecipe(BlockType[,] pattern)
     {
-        // Check for 2x2 square of wood planks
-        for (int x = 0; x < 2; x++)
+        int gridSize = CurrentGridSize;
+        
+        // For 2x2 grid, check the entire grid
+        if (gridSize == 2)
         {
-            for (int y = 0; y < 2; y++)
+            for (int x = 0; x < 2; x++)
             {
-                if (pattern[x, y] != BlockType.WoodPlanks)
+                for (int y = 0; y < 2; y++)
                 {
-                    return false;
+                    if (pattern[x, y] != BlockType.WoodPlanks)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        
+        // For 3x3 grid, check all possible 2x2 positions
+        for (int startX = 0; startX <= gridSize - 2; startX++)
+        {
+            for (int startY = 0; startY <= gridSize - 2; startY++)
+            {
+                // Check if this 2x2 area has all wood planks and all other slots are empty
+                bool has2x2WoodPlanks = true;
+                bool allOtherSlotsEmpty = true;
+                
+                // Check the 2x2 area
+                for (int x = startX; x < startX + 2; x++)
+                {
+                    for (int y = startY; y < startY + 2; y++)
+                    {
+                        if (pattern[x, y] != BlockType.WoodPlanks)
+                        {
+                            has2x2WoodPlanks = false;
+                            break;
+                        }
+                    }
+                    if (!has2x2WoodPlanks) break;
+                }
+                
+                if (has2x2WoodPlanks)
+                {
+                    // Check all other slots are empty
+                    for (int x = 0; x < gridSize; x++)
+                    {
+                        for (int y = 0; y < gridSize; y++)
+                        {
+                            // Skip the 2x2 area we just checked
+                            if (x >= startX && x < startX + 2 && y >= startY && y < startY + 2)
+                                continue;
+                                
+                            if (pattern[x, y] != BlockType.Air)
+                            {
+                                allOtherSlotsEmpty = false;
+                                break;
+                            }
+                        }
+                        if (!allOtherSlotsEmpty) break;
+                    }
+                    
+                    if (allOtherSlotsEmpty)
+                    {
+                        Debug.Log($"CraftingManager.CheckCraftingTableRecipe: Found crafting table recipe at position ({startX},{startY})!");
+                        return true;
+                    }
                 }
             }
         }
+        
+        return false;
+    }
+    
+    bool CheckChestRecipe(BlockType[,] pattern)
+    {
+        // Only works in 3x3 crafting
+        if (CurrentGridSize != 3) return false;
+        
+        // Check for chest pattern: 8 wood planks around the edges, center empty
+        // Pattern should be:
+        // [WP][WP][WP]
+        // [WP][  ][WP]
+        // [WP][WP][WP]
+        
+        if (pattern[1, 1] != BlockType.Air) return false; // Center must be empty
+        
+        // Check all edge positions for wood planks
+        for (int x = 0; x < 3; x++)
+        {
+            for (int y = 0; y < 3; y++)
+            {
+                if (x == 1 && y == 1) continue; // Skip center
+                if (pattern[x, y] != BlockType.WoodPlanks) return false;
+            }
+        }
+        
+        Debug.Log("CraftingManager: Chest recipe pattern matched!");
         return true;
     }
     
     BlockType[,] GetCurrentCraftingPattern()
     {
-        BlockType[,] pattern = new BlockType[2, 2];
+        int gridSize = CurrentGridSize;
+        BlockType[,] pattern = new BlockType[gridSize, gridSize];
         
-        for (int i = 0; i < craftingSlotCount; i++)
+        for (int i = 0; i < CurrentCraftingSlotCount; i++)
         {
-            int x = i % 2;
-            int y = i / 2;
+            int x = i % gridSize;
+            int y = i / gridSize;
             var stack = GetCraftingSlot(i);
             pattern[x, y] = stack.IsEmpty ? BlockType.Air : stack.blockType;
         }
@@ -232,7 +385,7 @@ public class CraftingManager : MonoBehaviour
     {
         if (playerInventory != null)
         {
-            var entry = playerInventory.GetSlot(craftingStartIndex + craftingIndex);
+            var entry = playerInventory.GetSlot(CurrentCraftingStartIndex + craftingIndex);
             // Convert InventoryEntry to ItemStack for crafting logic
             if (entry.IsEmpty) return new ItemStack();
             if (entry.entryType == InventoryEntryType.Block)
@@ -263,7 +416,7 @@ public class CraftingManager : MonoBehaviour
                     count = stack.count
                 };
             }
-            playerInventory.SetSlot(craftingStartIndex + craftingIndex, entry);
+            playerInventory.SetSlot(CurrentCraftingStartIndex + craftingIndex, entry);
         }
     }
     
@@ -271,7 +424,7 @@ public class CraftingManager : MonoBehaviour
     {
         if (playerInventory != null)
         {
-            var entry = playerInventory.GetSlot(resultSlotIndex);
+            var entry = playerInventory.GetSlot(CurrentResultSlotIndex);
             // Convert InventoryEntry to ItemStack
             if (entry.IsEmpty) return new ItemStack();
             if (entry.entryType == InventoryEntryType.Block)
@@ -313,7 +466,7 @@ public class CraftingManager : MonoBehaviour
                     count = stack.count
                 };
             }
-            playerInventory.SetSlot(resultSlotIndex, entry);
+            playerInventory.SetSlot(CurrentResultSlotIndex, entry);
         }
     }
     
@@ -375,7 +528,7 @@ public class CraftingManager : MonoBehaviour
     
     public void ConsumeCraftingMaterials()
     {
-        for (int i = 0; i < craftingSlotCount; i++)
+        for (int i = 0; i < CurrentCraftingSlotCount; i++)
         {
             var stack = GetCraftingSlot(i);
             if (!stack.IsEmpty)
@@ -394,14 +547,40 @@ public class CraftingManager : MonoBehaviour
     {
         if (playerInventory == null) return;
         
-        for (int i = 0; i < craftingSlotCount; i++)
+        for (int i = 0; i < CurrentCraftingSlotCount; i++)
         {
-            var stack = GetCraftingSlot(i);
-            if (!stack.IsEmpty)
+            // Get the actual inventory entry, not just the ItemStack
+            var entry = playerInventory.GetSlot(CurrentCraftingStartIndex + i);
+            if (!entry.IsEmpty)
             {
-                playerInventory.AddBlock(stack.blockType, stack.count);
-                SetCraftingSlot(i, new ItemStack());
+                // Add back to inventory based on entry type
+                if (entry.entryType == InventoryEntryType.Block)
+                {
+                    playerInventory.AddBlock(entry.blockType, entry.count);
+                }
+                else
+                {
+                    playerInventory.AddItem(entry.itemType, entry.count);
+                }
+                
+                // Clear the crafting slot
+                playerInventory.SetSlot(CurrentCraftingStartIndex + i, InventoryEntry.Empty);
             }
+        }
+        
+        // Also clear result slot if it has anything
+        var resultEntry = playerInventory.GetSlot(CurrentResultSlotIndex);
+        if (!resultEntry.IsEmpty)
+        {
+            if (resultEntry.entryType == InventoryEntryType.Block)
+            {
+                playerInventory.AddBlock(resultEntry.blockType, resultEntry.count);
+            }
+            else
+            {
+                playerInventory.AddItem(resultEntry.itemType, resultEntry.count);
+            }
+            playerInventory.SetSlot(CurrentResultSlotIndex, InventoryEntry.Empty);
         }
         
         CheckForValidRecipe();

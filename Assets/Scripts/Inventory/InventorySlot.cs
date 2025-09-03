@@ -3,7 +3,7 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using TMPro;
 
-public class InventorySlot : MonoBehaviour, IPointerClickHandler
+public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHandler, IDragHandler, IEndDragHandler
 {
     [Header("UI Components")]
     public Image background;
@@ -133,8 +133,8 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     {
         if (inventory == null) return;
         
-        // Handle crafting result slot specially
-        if (slotIndex == 40) // Result slot
+        // Handle crafting result slots specially
+        if (slotIndex == 40 || slotIndex == 50) // Result slots (player craft = 40, table craft = 50)
         {
             HandleResultSlotClick(eventData);
             return;
@@ -249,7 +249,10 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     {
         // Check if we have enough materials for another craft by checking if any recipe is still valid
         // This is more generic than hardcoding specific materials
-        for (int i = 0; i < 4; i++) // 4 crafting slots
+        // Check both 2x2 (4 slots) and 3x3 (9 slots) based on current crafting mode
+        int currentSlotCount = craftingManager.useTableCrafting ? 9 : 4;
+        
+        for (int i = 0; i < currentSlotCount; i++)
         {
             var slot = craftingManager.GetCraftingSlot(i);
             if (!slot.IsEmpty && slot.count > 0)
@@ -673,4 +676,75 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler
     
     // Minecraft-style click-based inventory system
     // First click picks up items to cursor, second click places them
+    
+    // Drag and Drop functionality for crafting table interaction
+    private static InventorySlot draggedInventorySlot;
+    private static GameObject inventoryDragPreview;
+    
+    public void OnBeginDrag(PointerEventData eventData)
+    {
+        if (currentEntry.IsEmpty) return;
+        
+        draggedInventorySlot = this;
+        
+        // Set the shared draggedSlot variable that CraftingSlot looks for
+        var craftingSlot = FindFirstObjectByType<CraftingSlot>();
+        if (craftingSlot != null)
+        {
+            // Access the static draggedSlot field through reflection or make it public
+            CraftingSlot.SetDraggedSlot(this);
+        }
+        
+        CreateInventoryDragPreview();
+    }
+    
+    public void OnDrag(PointerEventData eventData)
+    {
+        if (inventoryDragPreview != null)
+        {
+            Vector2 position;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                parentCanvas.transform as RectTransform,
+                eventData.position,
+                parentCanvas.worldCamera,
+                out position);
+            inventoryDragPreview.transform.position = parentCanvas.transform.TransformPoint(position);
+        }
+    }
+    
+    public void OnEndDrag(PointerEventData eventData)
+    {
+        DestroyInventoryDragPreview();
+        draggedInventorySlot = null;
+        
+        // Clear the shared draggedComponent in CraftingSlot
+        CraftingSlot.SetDraggedSlot(null);
+    }
+    
+    void CreateInventoryDragPreview()
+    {
+        if (parentCanvas == null) return;
+        
+        inventoryDragPreview = new GameObject("InventoryDragPreview");
+        inventoryDragPreview.transform.SetParent(parentCanvas.transform, false);
+        
+        var image = inventoryDragPreview.AddComponent<Image>();
+        image.sprite = icon.sprite;
+        image.color = new Color(1, 1, 1, 0.8f);
+        image.raycastTarget = false;
+        
+        var rectTransform = inventoryDragPreview.GetComponent<RectTransform>();
+        rectTransform.sizeDelta = icon.rectTransform.sizeDelta;
+        
+        inventoryDragPreview.transform.SetAsLastSibling();
+    }
+    
+    void DestroyInventoryDragPreview()
+    {
+        if (inventoryDragPreview != null)
+        {
+            Destroy(inventoryDragPreview);
+            inventoryDragPreview = null;
+        }
+    }
 }

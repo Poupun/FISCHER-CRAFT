@@ -5,11 +5,14 @@ public class InventoryManager : MonoBehaviour
     [Header("References")]
     public GameObject inventoryPanel;
     public PlayerInventory playerInventory;
+    public GameObject playerCraft;
+    public GameObject tableCraft;
     
     [Header("Settings")]
     public KeyCode inventoryKey = KeyCode.E;
     
     private bool isInventoryOpen = false;
+    private bool isTableCraftingMode = false;
     private PauseManager pauseManager;
     private PlayerController playerController;
     
@@ -26,6 +29,9 @@ public class InventoryManager : MonoBehaviour
         
         if (inventoryPanel != null)
             inventoryPanel.SetActive(false);
+            
+        // Initialize crafting panels
+        SetCraftingMode(false); // Start with normal crafting
     }
     
     void Update()
@@ -75,7 +81,7 @@ public class InventoryManager : MonoBehaviour
     {
         isInventoryOpen = false;
         
-        // Clear crafting grid when closing inventory
+        // Clear crafting grid when closing inventory (CraftingManager handles both 2x2 and 3x3 modes)
         var craftingManager = FindFirstObjectByType<CraftingManager>();
         if (craftingManager != null)
         {
@@ -90,10 +96,37 @@ public class InventoryManager : MonoBehaviour
         
         if (playerController != null)
             playerController.enabled = true;
+            
+        // Reset to normal crafting mode when closing
+        SetCraftingMode(false);
     }
     
     public bool IsInventoryOpen()
     {
         return isInventoryOpen;
+    }
+    
+    public void OpenInventoryWithTableCrafting()
+    {
+        SetCraftingMode(true);
+        OpenInventory();
+    }
+    
+    void SetCraftingMode(bool useTableCrafting)
+    {
+        isTableCraftingMode = useTableCrafting;
+        
+        if (playerCraft != null)
+            playerCraft.SetActive(!useTableCrafting);
+            
+        if (tableCraft != null)
+            tableCraft.SetActive(useTableCrafting);
+            
+        // Update CraftingManager to use the correct crafting mode
+        var craftingManager = FindFirstObjectByType<CraftingManager>();
+        if (craftingManager != null)
+        {
+            craftingManager.SetCraftingMode(useTableCrafting);
+        }
     }
 }

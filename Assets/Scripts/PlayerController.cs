@@ -79,8 +79,15 @@ public class PlayerController : MonoBehaviour
                 return;
             }
             
-            // If no dropped item was clicked, place a block
-            Debug.Log("PlayerController: No dropped item clicked, placing block");
+            // Check if we're clicking on a crafting table
+            if (TryInteractWithCraftingTable())
+            {
+                Debug.Log("PlayerController: Interacted with crafting table, skipping block placement");
+                return;
+            }
+            
+            // If no dropped item or crafting table was clicked, place a block
+            Debug.Log("PlayerController: No special interaction, placing block");
             PlaceBlock();
         }
     }
@@ -107,6 +114,56 @@ public class PlayerController : MonoBehaviour
         }
         
         Debug.Log("PlayerController: No dropped items found in raycast");
+        return false;
+    }
+    
+    private bool TryInteractWithCraftingTable()
+    {
+        Ray ray = playerCamera.ScreenPointToRay(new Vector3(Screen.width/2, Screen.height/2, 0));
+        
+        // Use the same voxel raycast system as block placement
+        if (worldGenerator != null && worldGenerator.useChunkStreaming && worldGenerator.useChunkMeshing)
+        {
+            Vector3Int hitCell, placeCell;
+            Vector3 hitNormal;
+            if (worldGenerator.TryVoxelRaycast(ray, interactionRange, out hitCell, out placeCell, out hitNormal))
+            {
+                BlockType blockType = worldGenerator.GetBlockType(hitCell);
+                if (blockType == BlockType.CraftingTable)
+                {
+                    Debug.Log("PlayerController: Player right-clicked on crafting table, opening table crafting interface");
+                    var inventoryManager = FindFirstObjectByType<InventoryManager>();
+                    if (inventoryManager != null)
+                    {
+                        inventoryManager.OpenInventoryWithTableCrafting();
+                        return true;
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Fallback raycast method
+            if (Physics.Raycast(ray, out RaycastHit hit, interactionRange))
+            {
+                Vector3Int blockPosition = Vector3Int.RoundToInt(hit.collider.bounds.center);
+                if (worldGenerator != null)
+                {
+                    BlockType blockType = worldGenerator.GetBlockType(blockPosition);
+                    if (blockType == BlockType.CraftingTable)
+                    {
+                        Debug.Log("PlayerController: Player right-clicked on crafting table (fallback), opening table crafting interface");
+                        var inventoryManager = FindFirstObjectByType<InventoryManager>();
+                        if (inventoryManager != null)
+                        {
+                            inventoryManager.OpenInventoryWithTableCrafting();
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
         return false;
     }
     

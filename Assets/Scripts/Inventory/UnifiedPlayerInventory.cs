@@ -6,11 +6,13 @@ public class UnifiedPlayerInventory : MonoBehaviour
     [Header("Inventory Settings")] 
     public int hotbarSize = 9;
     public int mainInventorySize = 27;
-    public int craftingSlots = 5;
+    public int craftingSlots = 5;  // 2x2 + result slot (36-40)
+    public int tableCraftingSlots = 10; // 3x3 + result slot (41-50)
     
     public InventoryEntry[] hotbar;
     public InventoryEntry[] mainInventory;
     public InventoryEntry[] craftingInventory;
+    public InventoryEntry[] tableCraftingInventory;
     public int selectedIndex = 0;
 
     public event Action OnInventoryChanged;
@@ -23,6 +25,7 @@ public class UnifiedPlayerInventory : MonoBehaviour
         hotbar = new InventoryEntry[hotbarSize];
         mainInventory = new InventoryEntry[mainInventorySize];
         craftingInventory = new InventoryEntry[craftingSlots];
+        tableCraftingInventory = new InventoryEntry[tableCraftingSlots];
         
         for (int i = 0; i < hotbar.Length; i++)
         {
@@ -37,6 +40,11 @@ public class UnifiedPlayerInventory : MonoBehaviour
         for (int i = 0; i < craftingInventory.Length; i++)
         {
             craftingInventory[i] = InventoryEntry.Empty;
+        }
+        
+        for (int i = 0; i < tableCraftingInventory.Length; i++)
+        {
+            tableCraftingInventory[i] = InventoryEntry.Empty;
         }
         
         // Add test items
@@ -193,6 +201,12 @@ public class UnifiedPlayerInventory : MonoBehaviour
         int craftingStartIndex = hotbarSize + mainInventorySize;
         return slotIndex >= craftingStartIndex && slotIndex < (craftingStartIndex + craftingSlots);
     }
+    
+    public bool IsTableCraftingSlot(int slotIndex)
+    {
+        int tableCraftingStartIndex = hotbarSize + mainInventorySize + craftingSlots;
+        return slotIndex >= tableCraftingStartIndex && slotIndex < (tableCraftingStartIndex + tableCraftingSlots);
+    }
 
     public InventoryEntry GetSlot(int slotIndex)
     {
@@ -208,6 +222,11 @@ public class UnifiedPlayerInventory : MonoBehaviour
         {
             int craftingStartIndex = hotbarSize + mainInventorySize;
             return craftingInventory[slotIndex - craftingStartIndex];
+        }
+        else if (IsTableCraftingSlot(slotIndex))
+        {
+            int tableCraftingStartIndex = hotbarSize + mainInventorySize + craftingSlots;
+            return tableCraftingInventory[slotIndex - tableCraftingStartIndex];
         }
         return InventoryEntry.Empty;
     }
@@ -226,6 +245,11 @@ public class UnifiedPlayerInventory : MonoBehaviour
         {
             int craftingStartIndex = hotbarSize + mainInventorySize;
             craftingInventory[slotIndex - craftingStartIndex] = entry;
+        }
+        else if (IsTableCraftingSlot(slotIndex))
+        {
+            int tableCraftingStartIndex = hotbarSize + mainInventorySize + craftingSlots;
+            tableCraftingInventory[slotIndex - tableCraftingStartIndex] = entry;
         }
         
         OnInventoryChanged?.Invoke();
@@ -276,7 +300,7 @@ public class UnifiedPlayerInventory : MonoBehaviour
 
     public int GetTotalSlotCount()
     {
-        return hotbarSize + mainInventorySize + craftingSlots;
+        return hotbarSize + mainInventorySize + craftingSlots + tableCraftingSlots;
     }
 
     public InventoryEntry GetSelectedEntry()
