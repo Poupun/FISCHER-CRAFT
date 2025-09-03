@@ -156,6 +156,20 @@ public class BlockManager : MonoBehaviour
         return sprite;
     }
     
+    // Optional method to get 3D rendered icons for inventory display
+    public static Sprite GetInventoryIcon(BlockType blockType)
+    {
+        // Try 3D icon first if renderer is available
+        if (Simple3DIconRenderer.Instance != null)
+        {
+            var icon3D = Simple3DIconRenderer.Instance.Get3DIcon(blockType);
+            if (icon3D != null) return icon3D;
+        }
+        
+        // Fallback to regular flat sprite
+        return GetBlockSprite(blockType);
+    }
+    
     public static float GetHardness(BlockType blockType)
     {
         if (Instance == null)

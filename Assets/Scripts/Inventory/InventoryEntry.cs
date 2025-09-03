@@ -75,7 +75,7 @@ public struct InventoryEntry
         if (entryType == InventoryEntryType.Item)
             return ItemManager.GetItemSprite(itemType);
         else
-            return BlockManager.GetBlockSprite(blockType);
+            return BlockManager.GetInventoryIcon(blockType); // Use 3D icons for inventory
     }
     
     public bool CanStackWith(InventoryEntry other)

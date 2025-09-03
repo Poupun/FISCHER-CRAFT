@@ -3,7 +3,7 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using TMPro;
 
-public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHandler, IDragHandler, IEndDragHandler
+public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerEnterHandler, IPointerExitHandler
 {
     [Header("UI Components")]
     public Image background;
@@ -15,9 +15,19 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHand
     public Color highlightColor = Color.yellow;
     public int slotIndex;
     
+    [Header("Hover Animation")]
+    public float hoverScale = 1.1f;
+    public float animationDuration = 0.15f;
+    public AnimationCurve scaleCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
+    
     private UnifiedPlayerInventory inventory;
     private InventoryEntry currentEntry;
     private Canvas parentCanvas;
+    
+    // Hover animation state
+    private bool isHovered = false;
+    private bool isDragging = false;
+    private Coroutine hoverAnimation;
     
     // Temporary compatibility property for migration  
     private ItemStack currentStack 
@@ -73,6 +83,13 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHand
     {
         if (inventory != null)
             inventory.OnInventoryChanged -= RefreshSlot;
+            
+        // Clean up any running hover animation
+        if (hoverAnimation != null)
+        {
+            StopCoroutine(hoverAnimation);
+            hoverAnimation = null;
+        }
     }
     
     public void SetSlotIndex(int index)
@@ -84,6 +101,13 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHand
     void RefreshSlot()
     {
         if (inventory == null) return;
+        
+        // Cancel any ongoing hover animation when slot content changes
+        if (hoverAnimation != null)
+        {
+            StopCoroutine(hoverAnimation);
+            hoverAnimation = null;
+        }
         
         currentEntry = inventory.GetSlot(slotIndex);
         
@@ -97,6 +121,8 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHand
                 if (currentEntry.IsEmpty)
                 {
                     icon.enabled = false;
+                    // Reset scale when slot becomes empty
+                    icon.transform.localScale = Vector3.one;
                 }
                 else
                 {
@@ -104,6 +130,11 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHand
                     icon.sprite = currentEntry.GetSprite(); // Use the unified sprite method
                     icon.color = Color.white;
                     icon.preserveAspect = true;  // Match HotbarUI setting
+                    // Reset scale when new item appears (unless currently hovered)
+                    if (!isHovered)
+                    {
+                        icon.transform.localScale = Vector3.one;
+                    }
                 }
             }
             
@@ -685,6 +716,14 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHand
     {
         if (currentEntry.IsEmpty) return;
         
+        isDragging = true;
+        // Cancel hover animation during drag
+        if (hoverAnimation != null)
+        {
+            StopCoroutine(hoverAnimation);
+            hoverAnimation = null;
+        }
+        
         draggedInventorySlot = this;
         
         // Set the shared draggedSlot variable that CraftingSlot looks for
@@ -714,11 +753,18 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHand
     
     public void OnEndDrag(PointerEventData eventData)
     {
+        isDragging = false;
         DestroyInventoryDragPreview();
         draggedInventorySlot = null;
         
         // Clear the shared draggedComponent in CraftingSlot
         CraftingSlot.SetDraggedSlot(null);
+        
+        // Resume hover animation if still hovered
+        if (isHovered && !currentEntry.IsEmpty)
+        {
+            StartHoverAnimation(true);
+        }
     }
     
     void CreateInventoryDragPreview()
@@ -746,5 +792,58 @@ public class InventorySlot : MonoBehaviour, IPointerClickHandler, IBeginDragHand
             Destroy(inventoryDragPreview);
             inventoryDragPreview = null;
         }
+    }
+    
+    // Hover Animation Methods
+    public void OnPointerEnter(PointerEventData eventData)
+    {
+        if (currentEntry.IsEmpty || isDragging) return;
+        
+        isHovered = true;
+        StartHoverAnimation(true);
+    }
+    
+    public void OnPointerExit(PointerEventData eventData)
+    {
+        if (isDragging) return;
+        
+        isHovered = false;
+        StartHoverAnimation(false);
+    }
+    
+    void StartHoverAnimation(bool hoverIn)
+    {
+        if (icon == null) return;
+        
+        // Stop any existing animation
+        if (hoverAnimation != null)
+        {
+            StopCoroutine(hoverAnimation);
+        }
+        
+        hoverAnimation = StartCoroutine(AnimateHover(hoverIn));
+    }
+    
+    System.Collections.IEnumerator AnimateHover(bool hoverIn)
+    {
+        Vector3 startScale = icon.transform.localScale;
+        Vector3 targetScale = hoverIn ? Vector3.one * hoverScale : Vector3.one;
+        
+        float elapsedTime = 0f;
+        
+        while (elapsedTime < animationDuration)
+        {
+            elapsedTime += Time.deltaTime;
+            float progress = Mathf.Clamp01(elapsedTime / animationDuration);
+            float curveValue = scaleCurve.Evaluate(progress);
+            
+            icon.transform.localScale = Vector3.Lerp(startScale, targetScale, curveValue);
+            
+            yield return null;
+        }
+        
+        // Ensure we end exactly at the target scale
+        icon.transform.localScale = targetScale;
+        hoverAnimation = null;
     }
 }
