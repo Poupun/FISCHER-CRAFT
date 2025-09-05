@@ -4854,8 +4854,8 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  itemLocalPosition: {x: 0.58, y: -0.62, z: 0.72}
-  itemLocalEuler: {x: 3.23, y: 348.1, z: 21.1}
+  itemLocalPosition: {x: 0.58, y: -0.48, z: 0.72}
+  itemLocalEuler: {x: 17.37, y: 814.2, z: 46.8}
   itemScale: 1
   itemDepth: 0.04
   sideDarken: 0.65
@@ -4869,12 +4869,12 @@ MonoBehaviour:
   forcePointFilter: 1
   solidColorSides: 1
   currentEntry:
-    entryType: 0
-    blockType: 2
-    itemType: 0
-    count: 16
+    entryType: 1
+    blockType: 0
+    itemType: 1001
+    count: 1
   shownBlock: 2
-  shownItem: 1000
+  shownItem: 1001
   autoFallbackOnUnreadableTexture: 1
   logUnreadableTextureWarning: 1
 --- !u!1001 &1676338442
@@ -5888,10 +5888,12 @@ MonoBehaviour:
   - {fileID: 11400000, guid: cbf3c6bff58ac2445a5bcc92d8d33272, type: 2}
   - {fileID: 11400000, guid: ca84a97155cb3944daed5b56ca9416ea, type: 2}
   - {fileID: 11400000, guid: 70ed16d16573ea4408280247ec467a0a, type: 2}
-  - {fileID: 11400000, guid: 2f68871f91ad1ae41a530e2a6242d62b, type: 2}
+  - {fileID: 0}
   - {fileID: 0}
   autoLoadBlockAssets: 1
   blockAssetsPath: Assets/Data/Blocks
+  showHardnessTweaker: 1
+  hardnessOverrides: []
 --- !u!114 &1993967622
 MonoBehaviour:
   m_ObjectHideFlags: 0

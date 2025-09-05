@@ -118,7 +118,19 @@ public class CraftingManager : MonoBehaviour
         BlockType[,] currentPattern = GetCurrentCraftingPattern();
         
         // Debug: Log the pattern
-        Debug.Log($"CraftingManager: Pattern = [{currentPattern[0,0]}, {currentPattern[1,0]}], [{currentPattern[0,1]}, {currentPattern[1,1]}]");
+        if (CurrentGridSize == 2)
+        {
+            Debug.Log($"CraftingManager: 2x2 Pattern = [{currentPattern[0,0]}, {currentPattern[1,0]}] / [{currentPattern[0,1]}, {currentPattern[1,1]}]");
+        }
+        else
+        {
+            Debug.Log($"CraftingManager: 3x3 Pattern = [{currentPattern[0,0]}, {currentPattern[1,0]}, {currentPattern[2,0]}] / [{currentPattern[0,1]}, {currentPattern[1,1]}, {currentPattern[2,1]}] / [{currentPattern[0,2]}, {currentPattern[1,2]}, {currentPattern[2,2]}]");
+            
+            // Debug: Also log actual inventory entries for stick slots
+            var entry4 = playerInventory.GetSlot(CurrentCraftingStartIndex + 4);
+            var entry7 = playerInventory.GetSlot(CurrentCraftingStartIndex + 7);
+            Debug.Log($"CraftingManager: Stick slots - Entry4(slot {CurrentCraftingStartIndex + 4}): {entry4.entryType}, {(entry4.entryType == InventoryEntryType.Item ? entry4.itemType.ToString() : "N/A")} | Entry7(slot {CurrentCraftingStartIndex + 7}): {entry7.entryType}, {(entry7.entryType == InventoryEntryType.Item ? entry7.itemType.ToString() : "N/A")}");
+        }
         
         // Check for multiple recipes
         ItemStack recipeResult = CheckRecipes(currentPattern);
@@ -157,6 +169,34 @@ public class CraftingManager : MonoBehaviour
             // Special handling for item results - return a placeholder that indicates success
             return new ItemStack(BlockType.Air, 999); // Special marker for item recipes (using 999 instead of -1)
         }
+
+        // Tool Recipes (only work in 3x3 table crafting)
+        if (useTableCrafting && CurrentGridSize == 3)
+        {
+            // Check for pickaxe recipes (3 material blocks in top row + 2 sticks vertically in center column)
+            var pickaxeResult = CheckPickaxeRecipe(pattern);
+            if (!pickaxeResult.IsEmpty)
+            {
+                Debug.Log($"CraftingManager.CheckRecipes: Pickaxe recipe matched, returning ItemStack(Air, {pickaxeResult.count})");
+                return pickaxeResult;
+            }
+            
+            // Check for shovel recipes (1 material block at top center + 2 sticks vertically below)
+            var shovelResult = CheckShovelRecipe(pattern);
+            if (!shovelResult.IsEmpty)
+            {
+                Debug.Log($"CraftingManager.CheckRecipes: Shovel recipe matched");
+                return shovelResult;
+            }
+            
+            // Check for axe recipes (3 material blocks in L-shape + 2 sticks vertically)
+            var axeResult = CheckAxeRecipe(pattern);
+            if (!axeResult.IsEmpty)
+            {
+                Debug.Log($"CraftingManager.CheckRecipes: Axe recipe matched");
+                return axeResult;
+            }
+        }
         
         // Recipe 3: Crafting Table (4 wood planks = 1 crafting table, 2x2 square)
         if (CheckCraftingTableRecipe(pattern))
@@ -194,7 +234,7 @@ public class CraftingManager : MonoBehaviour
                 else if (pattern[x, y] != BlockType.Air)
                 {
                     Debug.Log($"CheckSingleItemRecipe: Failed - found {pattern[x, y]} at [{x},{y}], expected {requiredItem} or Air");
-                    return false; // Other items present
+                    return false; // Other blocks present
                 }
             }
         }
@@ -308,7 +348,7 @@ public class CraftingManager : MonoBehaviour
                 
                 if (has2x2WoodPlanks)
                 {
-                    // Check all other slots are empty
+                    // Check all other slots are empty (including no items)
                     for (int x = 0; x < gridSize; x++)
                     {
                         for (int y = 0; y < gridSize; y++)
@@ -351,6 +391,7 @@ public class CraftingManager : MonoBehaviour
         
         if (pattern[1, 1] != BlockType.Air) return false; // Center must be empty
         
+        
         // Check all edge positions for wood planks
         for (int x = 0; x < 3; x++)
         {
@@ -363,6 +404,169 @@ public class CraftingManager : MonoBehaviour
         
         Debug.Log("CraftingManager: Chest recipe pattern matched!");
         return true;
+    }
+    
+    ItemStack CheckPickaxeRecipe(BlockType[,] pattern)
+    {
+        // Pickaxe pattern: 3x3 grid
+        // [MAT][MAT][MAT]
+        // [   ][STK][   ]
+        // [   ][STK][   ]
+        // Where MAT is material (WoodPlanks, Stone, Iron) and STK represents sticks
+        
+        // Check if top row has 3 of same material
+        if (pattern[0, 0] != BlockType.Air && 
+            pattern[1, 0] == pattern[0, 0] && 
+            pattern[2, 0] == pattern[0, 0])
+        {
+            BlockType material = pattern[0, 0];
+            
+            // Check if center column (index 1) has 2 sticks
+            var stickEntry1 = playerInventory.GetSlot(CurrentCraftingStartIndex + 4); // Center middle (1 + 1*3 = 4)
+            var stickEntry2 = playerInventory.GetSlot(CurrentCraftingStartIndex + 7); // Center bottom (1 + 2*3 = 7)
+            
+            if (stickEntry1.entryType == InventoryEntryType.Item && stickEntry1.itemType == ItemType.Stick &&
+                stickEntry2.entryType == InventoryEntryType.Item && stickEntry2.itemType == ItemType.Stick)
+            {
+                // Check that all other positions are empty
+                if (pattern[0, 1] == BlockType.Air && pattern[2, 1] == BlockType.Air &&
+                    pattern[0, 2] == BlockType.Air && pattern[2, 2] == BlockType.Air)
+                {
+                    ItemType toolType = GetPickaxeTypeForMaterial(material);
+                    if (toolType != ItemType.Stick) // Valid tool type found
+                    {
+                        Debug.Log($"CraftingManager: Found valid pickaxe recipe for {material} -> {toolType}");
+                        return new ItemStack(BlockType.Air, (int)toolType);
+                    }
+                }
+            }
+        }
+        
+        return new ItemStack(); // No valid pickaxe recipe
+    }
+    
+    ItemStack CheckShovelRecipe(BlockType[,] pattern)
+    {
+        // Shovel pattern: 3x3 grid
+        // [   ][MAT][   ]
+        // [   ][STK][   ]
+        // [   ][STK][   ]
+        // Where MAT is material (WoodPlanks, Stone, Iron) and STK represents sticks
+        
+        // Check if center column has material at top and 2 sticks below
+        if (pattern[1, 0] != BlockType.Air) // Material at top center
+        {
+            BlockType material = pattern[1, 0];
+            
+            // Check if center column has 2 sticks
+            var stickEntry1 = playerInventory.GetSlot(CurrentCraftingStartIndex + 4); // Center middle (1 + 1*3 = 4)
+            var stickEntry2 = playerInventory.GetSlot(CurrentCraftingStartIndex + 7); // Center bottom (1 + 2*3 = 7)
+            
+            if (stickEntry1.entryType == InventoryEntryType.Item && stickEntry1.itemType == ItemType.Stick &&
+                stickEntry2.entryType == InventoryEntryType.Item && stickEntry2.itemType == ItemType.Stick)
+            {
+                // Check that all other positions are empty
+                if (pattern[0, 0] == BlockType.Air && pattern[2, 0] == BlockType.Air &&
+                    pattern[0, 1] == BlockType.Air && pattern[2, 1] == BlockType.Air &&
+                    pattern[0, 2] == BlockType.Air && pattern[2, 2] == BlockType.Air)
+                {
+                    ItemType toolType = GetShovelTypeForMaterial(material);
+                    if (toolType != ItemType.Stick) // Valid tool type found
+                    {
+                        Debug.Log($"CraftingManager: Found valid shovel recipe for {material} -> {toolType}");
+                        return new ItemStack(BlockType.Air, (int)toolType);
+                    }
+                }
+            }
+        }
+        
+        return new ItemStack(); // No valid shovel recipe
+    }
+    
+    ItemStack CheckAxeRecipe(BlockType[,] pattern)
+    {
+        // Axe pattern: 3x3 grid
+        // [MAT][MAT][   ]
+        // [MAT][STK][   ]
+        // [   ][STK][   ]
+        // Where MAT is material (WoodPlanks, Stone, Iron) and STK represents sticks
+        
+        // Check if center column has 2 sticks
+        var stickEntry1 = playerInventory.GetSlot(CurrentCraftingStartIndex + 4); // Center middle (1 + 1*3 = 4)
+        var stickEntry2 = playerInventory.GetSlot(CurrentCraftingStartIndex + 7); // Center bottom (1 + 2*3 = 7)
+        
+        if (stickEntry1.entryType == InventoryEntryType.Item && stickEntry1.itemType == ItemType.Stick &&
+            stickEntry2.entryType == InventoryEntryType.Item && stickEntry2.itemType == ItemType.Stick)
+        {
+            // Pattern 1: L-shape with materials in top-left
+            if (pattern[0, 0] != BlockType.Air && pattern[1, 0] == pattern[0, 0] && pattern[0, 1] == pattern[0, 0])
+            {
+                BlockType material = pattern[0, 0];
+                // Check all other positions are empty
+                if (pattern[2, 0] == BlockType.Air && pattern[2, 1] == BlockType.Air && 
+                    pattern[0, 2] == BlockType.Air && pattern[2, 2] == BlockType.Air)
+                {
+                    ItemType toolType = GetAxeTypeForMaterial(material);
+                    if (toolType != ItemType.Stick)
+                    {
+                        Debug.Log($"CraftingManager: Found valid axe recipe (left L) for {material} -> {toolType}");
+                        return new ItemStack(BlockType.Air, (int)toolType);
+                    }
+                }
+            }
+            
+            // Pattern 2: L-shape with materials in top-right
+            if (pattern[2, 0] != BlockType.Air && pattern[1, 0] == pattern[2, 0] && pattern[2, 1] == pattern[2, 0])
+            {
+                BlockType material = pattern[2, 0];
+                // Check all other positions are empty
+                if (pattern[0, 0] == BlockType.Air && pattern[0, 1] == BlockType.Air && 
+                    pattern[0, 2] == BlockType.Air && pattern[2, 2] == BlockType.Air)
+                {
+                    ItemType toolType = GetAxeTypeForMaterial(material);
+                    if (toolType != ItemType.Stick)
+                    {
+                        Debug.Log($"CraftingManager: Found valid axe recipe (right L) for {material} -> {toolType}");
+                        return new ItemStack(BlockType.Air, (int)toolType);
+                    }
+                }
+            }
+        }
+        
+        return new ItemStack(); // No valid axe recipe
+    }
+    
+    ItemType GetPickaxeTypeForMaterial(BlockType material)
+    {
+        switch (material)
+        {
+            case BlockType.WoodPlanks: return ItemType.WoodPickaxe;
+            case BlockType.Stone: return ItemType.StonePickaxe;
+            case BlockType.Iron: return ItemType.IronPickaxe;
+            default: return ItemType.Stick; // Invalid material
+        }
+    }
+    
+    ItemType GetShovelTypeForMaterial(BlockType material)
+    {
+        switch (material)
+        {
+            case BlockType.WoodPlanks: return ItemType.WoodShovel;
+            case BlockType.Stone: return ItemType.StoneShovel;
+            case BlockType.Iron: return ItemType.IronShovel;
+            default: return ItemType.Stick; // Invalid material
+        }
+    }
+    
+    ItemType GetAxeTypeForMaterial(BlockType material)
+    {
+        switch (material)
+        {
+            case BlockType.WoodPlanks: return ItemType.WoodAxe;
+            case BlockType.Stone: return ItemType.StoneAxe;
+            case BlockType.Iron: return ItemType.IronAxe;
+            default: return ItemType.Stick; // Invalid material
+        }
     }
     
     BlockType[,] GetCurrentCraftingPattern()
@@ -391,7 +595,8 @@ public class CraftingManager : MonoBehaviour
             if (entry.entryType == InventoryEntryType.Block)
                 return new ItemStack(entry.blockType, entry.count);
             else
-                return new ItemStack(); // Items in crafting grid are not supported in current recipes
+                // Items show up as Bedrock in patterns so they're not invisible to recipe validation
+                return new ItemStack(BlockType.Bedrock, entry.count);
         }
         return new ItemStack();
     }
@@ -456,6 +661,17 @@ public class CraftingManager : MonoBehaviour
                     count = 4 // Stick recipe gives 4 sticks
                 };
             }
+            else if (stack.blockType == BlockType.Air && stack.count >= 1000)
+            {
+                // Special marker for tool results - count contains the ItemType value
+                entry = new InventoryEntry
+                {
+                    entryType = InventoryEntryType.Item,
+                    itemType = (ItemType)stack.count,
+                    blockType = BlockType.Air,
+                    count = 1 // Tools are crafted one at a time
+                };
+            }
             else
             {
                 entry = new InventoryEntry
@@ -477,10 +693,10 @@ public class CraftingManager : MonoBehaviour
         
         bool success = false;
         
-        // Check if this is a special item recipe result (marked with count = 999)
-        if (currentResult.blockType == BlockType.Air && currentResult.count == 999)
+        // Check if this is a special item recipe result (marked with count = 999 or >= 1000)
+        if (currentResult.blockType == BlockType.Air && (currentResult.count == 999 || currentResult.count >= 1000))
         {
-            // Handle special item recipes
+            // Handle special item recipes (sticks and tools)
             success = TryCollectItemResult();
         }
         else
@@ -505,22 +721,24 @@ public class CraftingManager : MonoBehaviour
     
     private bool TryCollectItemResult()
     {
-        // Check what item recipe this is based on the current crafting pattern
-        BlockType[,] pattern = GetCurrentCraftingPattern();
-        
-        if (CheckStickRecipe(pattern))
+        // playerInventory IS the UnifiedPlayerInventory component
+        if (playerInventory == null)
         {
-            // Give 4 sticks - we need to work with UnifiedPlayerInventory if available, or add to regular inventory as special case
-            var unifiedInventory = playerInventory.GetComponent<UnifiedPlayerInventory>();
-            if (unifiedInventory != null)
-            {
-                return unifiedInventory.AddItem(ItemType.Stick, 4);
-            }
-            else
-            {
-                Debug.LogWarning("CraftingManager: UnifiedPlayerInventory not found, cannot craft items. Please add UnifiedPlayerInventory component.");
-                return false;
-            }
+            Debug.LogWarning("CraftingManager: playerInventory not found, cannot craft items.");
+            return false;
+        }
+        
+        // Check what item recipe this is based on the current result
+        if (currentResult.count == 999)
+        {
+            // Stick recipe
+            return playerInventory.AddItem(ItemType.Stick, 4);
+        }
+        else if (currentResult.count >= 1000)
+        {
+            // Tool recipe - count contains the ItemType value
+            ItemType toolType = (ItemType)currentResult.count;
+            return playerInventory.AddItem(toolType, 1);
         }
         
         return false;

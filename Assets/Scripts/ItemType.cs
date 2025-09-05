@@ -11,6 +11,9 @@ public enum ItemType
     WoodAxe = 1010,
     StoneAxe = 1011,
     IronAxe = 1012,
+    WoodShovel = 1020,
+    StoneShovel = 1021,
+    IronShovel = 1022,
     
     // Crafting Materials  
     Coal = 1100,

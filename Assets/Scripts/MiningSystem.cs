@@ -109,11 +109,16 @@ public class MiningSystem : MonoBehaviour
                 
                 // Start mining process
                 currentMiningBlock = hitCell;
-                miningTimeRequired = BlockHardnessSystem.GetMiningTime(blockType) / globalMiningSpeedMultiplier;
+                
+                // Calculate mining time with tool effectiveness
+                float baseTime = BlockHardnessSystem.GetMiningTime(blockType);
+                float toolMultiplier = ToolEffectivenessSystem.GetMiningSpeedMultiplierForHeldTool(blockType);
+                float totalMultiplier = globalMiningSpeedMultiplier * toolMultiplier;
+                miningTimeRequired = baseTime / totalMultiplier;
                 miningProgress = 0f;
                 isMining = true;
                 
-                Debug.Log($"Mining: Started mining {blockType}, time required: {miningTimeRequired}s (base: {BlockHardnessSystem.GetMiningTime(blockType)}s, multiplier: {globalMiningSpeedMultiplier}x)");
+                Debug.Log($"Mining: Started mining {blockType}, time required: {miningTimeRequired:F2}s (base: {baseTime:F1}s, global: {globalMiningSpeedMultiplier}x, tool: {toolMultiplier:F1}x, total: {totalMultiplier:F1}x)");
                 
                 // Start mining coroutine
                 miningCoroutine = StartCoroutine(MiningCoroutine(blockType));
@@ -160,11 +165,16 @@ public class MiningSystem : MonoBehaviour
                 
                 // Start mining process
                 currentMiningBlock = blockInfo.position;
-                miningTimeRequired = BlockHardnessSystem.GetMiningTime(blockType) / globalMiningSpeedMultiplier;
+                
+                // Calculate mining time with tool effectiveness
+                float baseTime = BlockHardnessSystem.GetMiningTime(blockType);
+                float toolMultiplier = ToolEffectivenessSystem.GetMiningSpeedMultiplierForHeldTool(blockType);
+                float totalMultiplier = globalMiningSpeedMultiplier * toolMultiplier;
+                miningTimeRequired = baseTime / totalMultiplier;
                 miningProgress = 0f;
                 isMining = true;
                 
-                Debug.Log($"Mining: Started mining {blockType}, time required: {miningTimeRequired}s (base: {BlockHardnessSystem.GetMiningTime(blockType)}s, multiplier: {globalMiningSpeedMultiplier}x)");
+                Debug.Log($"Mining: Started mining {blockType}, time required: {miningTimeRequired:F2}s (base: {baseTime:F1}s, global: {globalMiningSpeedMultiplier}x, tool: {toolMultiplier:F1}x, total: {totalMultiplier:F1}x)");
                 
                 // Start mining coroutine
                 miningCoroutine = StartCoroutine(MiningCoroutine(blockType));

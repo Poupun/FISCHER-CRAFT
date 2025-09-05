@@ -2,6 +2,28 @@ using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 
+[System.Serializable]
+public class BlockHardnessOverride
+{
+    [Header("Block Hardness Override")]
+    public BlockType blockType;
+    [Range(0f, 10f)]
+    [Tooltip("Mining hardness (higher = slower to mine). 0 = instant break")]
+    public float hardness = 1f;
+    [Tooltip("Cannot be broken by any means")]
+    public bool isUnbreakable = false;
+    [Tooltip("Display name for this block")]
+    public string displayName;
+    
+    public BlockHardnessOverride(BlockType type, float hardnessValue, string name = "")
+    {
+        blockType = type;
+        hardness = hardnessValue;
+        displayName = string.IsNullOrEmpty(name) ? type.ToString() : name;
+        isUnbreakable = false;
+    }
+}
+
 public class BlockManager : MonoBehaviour
 {
     public static BlockManager Instance { get; private set; }
@@ -12,9 +34,16 @@ public class BlockManager : MonoBehaviour
     [SerializeField] private bool autoLoadBlockAssets = true;
     [SerializeField] private string blockAssetsPath = "Assets/Data/Blocks";
     
+    [Header("Hardness Tweaking")]
+    [Tooltip("Enable this to show hardness tweaking controls in the inspector")]
+    [SerializeField] private bool showHardnessTweaker = true;
+    [Tooltip("Override hardness values at runtime (does not save to assets)")]
+    [SerializeField] private BlockHardnessOverride[] hardnessOverrides;
+    
     private Dictionary<BlockType, BlockConfiguration> blockRegistry;
     private Dictionary<BlockType, Sprite> spriteCache;
     private Dictionary<BlockType, Material> materialCache;
+    private Dictionary<BlockType, BlockHardnessOverride> hardnessOverrideCache;
     
     void Awake()
     {
@@ -41,6 +70,7 @@ public class BlockManager : MonoBehaviour
         blockRegistry = new Dictionary<BlockType, BlockConfiguration>();
         spriteCache = new Dictionary<BlockType, Sprite>();
         materialCache = new Dictionary<BlockType, Material>();
+        hardnessOverrideCache = new Dictionary<BlockType, BlockHardnessOverride>();
         
         // Auto-load block assets if enabled and allBlocks is empty or has null entries
         if (autoLoadBlockAssets && (allBlocks == null || allBlocks.Length == 0 || System.Array.Exists(allBlocks, x => x == null)))
@@ -61,6 +91,64 @@ public class BlockManager : MonoBehaviour
         }
         
         Debug.Log($"BlockManager: Initialized with {blockRegistry.Count} blocks");
+        
+        // Initialize hardness overrides
+        InitializeHardnessOverrides();
+    }
+    
+    void InitializeHardnessOverrides()
+    {
+        // Initialize hardness overrides with default values if empty
+        if (hardnessOverrides == null || hardnessOverrides.Length == 0)
+        {
+            CreateDefaultHardnessOverrides();
+        }
+        
+        // Cache hardness overrides for fast lookup
+        hardnessOverrideCache.Clear();
+        if (hardnessOverrides != null)
+        {
+            foreach (var hardnessOverride in hardnessOverrides)
+            {
+                if (hardnessOverride != null)
+                {
+                    hardnessOverrideCache[hardnessOverride.blockType] = hardnessOverride;
+                }
+            }
+        }
+        
+        Debug.Log($"BlockManager: Loaded {hardnessOverrideCache.Count} hardness overrides");
+    }
+    
+    void CreateDefaultHardnessOverrides()
+    {
+        // Create default hardness values for all known block types
+        var defaultOverrides = new List<BlockHardnessOverride>
+        {
+            new BlockHardnessOverride(BlockType.Air, 0f, "Air"),
+            new BlockHardnessOverride(BlockType.Grass, 0.3f, "Grass Block"),
+            new BlockHardnessOverride(BlockType.Dirt, 0.25f, "Dirt"),
+            new BlockHardnessOverride(BlockType.Stone, 0.75f, "Stone"),
+            new BlockHardnessOverride(BlockType.Sand, 0.25f, "Sand"),
+            new BlockHardnessOverride(BlockType.Gravel, 0.3f, "Gravel"),
+            new BlockHardnessOverride(BlockType.Log, 1.0f, "Oak Log"),
+            new BlockHardnessOverride(BlockType.Leaves, 0.1f, "Oak Leaves"),
+            new BlockHardnessOverride(BlockType.Coal, 1.5f, "Coal Ore"),
+            new BlockHardnessOverride(BlockType.Iron, 1.5f, "Iron Ore"),
+            new BlockHardnessOverride(BlockType.Gold, 1.5f, "Gold Ore"),
+            new BlockHardnessOverride(BlockType.Diamond, 1.5f, "Diamond Ore"),
+            new BlockHardnessOverride(BlockType.WoodPlanks, 1.0f, "Oak Planks"),
+            new BlockHardnessOverride(BlockType.CraftingTable, 1.25f, "Crafting Table"),
+            new BlockHardnessOverride(BlockType.Water, 0f, "Water"),
+        };
+        
+        // Set bedrock as unbreakable
+        var bedrockOverride = new BlockHardnessOverride(BlockType.Bedrock, 5f, "Bedrock");
+        bedrockOverride.isUnbreakable = true;
+        defaultOverrides.Add(bedrockOverride);
+        
+        hardnessOverrides = defaultOverrides.ToArray();
+        Debug.Log($"BlockManager: Created {hardnessOverrides.Length} default hardness overrides");
     }
     
     void LoadBlockAssetsFromPath()
@@ -177,6 +265,14 @@ public class BlockManager : MonoBehaviour
             // Fallback to legacy system or default values
             return BlockHardnessSystem.GetHardnessFromLegacySystem(blockType);
         }
+        
+        // Check for hardness override first
+        if (Instance.hardnessOverrideCache.TryGetValue(blockType, out BlockHardnessOverride hardnessOverride))
+        {
+            return hardnessOverride.hardness;
+        }
+        
+        // Fallback to block configuration
         var blockData = GetBlockConfiguration(blockType);
         return blockData?.hardness ?? 1f;
     }
@@ -188,6 +284,14 @@ public class BlockManager : MonoBehaviour
             // Fallback to legacy system or default values
             return blockType == BlockType.Bedrock;
         }
+        
+        // Check for hardness override first
+        if (Instance.hardnessOverrideCache.TryGetValue(blockType, out BlockHardnessOverride hardnessOverride))
+        {
+            return hardnessOverride.isUnbreakable;
+        }
+        
+        // Fallback to block configuration
         var blockData = GetBlockConfiguration(blockType);
         return blockData?.isUnbreakable ?? false;
     }
@@ -294,6 +398,95 @@ public class BlockManager : MonoBehaviour
                 }
             }
         }
+        
+        // Refresh hardness overrides when values change in inspector
+        if (Application.isPlaying && hardnessOverrideCache != null)
+        {
+            RefreshHardnessOverrides();
+        }
+    }
+    
+    public void RefreshHardnessOverrides()
+    {
+        if (hardnessOverrideCache == null)
+        {
+            hardnessOverrideCache = new Dictionary<BlockType, BlockHardnessOverride>();
+        }
+        
+        hardnessOverrideCache.Clear();
+        
+        if (hardnessOverrides != null)
+        {
+            foreach (var hardnessOverride in hardnessOverrides)
+            {
+                if (hardnessOverride != null)
+                {
+                    // Update display name if empty
+                    if (string.IsNullOrEmpty(hardnessOverride.displayName))
+                    {
+                        hardnessOverride.displayName = hardnessOverride.blockType.ToString();
+                    }
+                    hardnessOverrideCache[hardnessOverride.blockType] = hardnessOverride;
+                }
+            }
+        }
+        
+        Debug.Log($"BlockManager: Refreshed {hardnessOverrideCache.Count} hardness overrides");
+    }
+    
+    // Public methods for runtime hardness modification
+    public static void SetBlockHardness(BlockType blockType, float hardness)
+    {
+        if (Instance == null) return;
+        
+        if (Instance.hardnessOverrideCache.TryGetValue(blockType, out BlockHardnessOverride hardnessOverride))
+        {
+            hardnessOverride.hardness = hardness;
+        }
+        else
+        {
+            var newOverride = new BlockHardnessOverride(blockType, hardness);
+            Instance.hardnessOverrideCache[blockType] = newOverride;
+        }
+        
+        Debug.Log($"BlockManager: Set hardness for {blockType} to {hardness}");
+    }
+    
+    public static void SetBlockUnbreakable(BlockType blockType, bool unbreakable)
+    {
+        if (Instance == null) return;
+        
+        if (Instance.hardnessOverrideCache.TryGetValue(blockType, out BlockHardnessOverride hardnessOverride))
+        {
+            hardnessOverride.isUnbreakable = unbreakable;
+        }
+        else
+        {
+            var newOverride = new BlockHardnessOverride(blockType, 1f);
+            newOverride.isUnbreakable = unbreakable;
+            Instance.hardnessOverrideCache[blockType] = newOverride;
+        }
+        
+        Debug.Log($"BlockManager: Set {blockType} unbreakable to {unbreakable}");
+    }
+    
+    // Utility method to get all current hardness values for debugging
+    public static string GetHardnessDebugInfo()
+    {
+        if (Instance == null) return "BlockManager instance not found";
+        
+        var info = new System.Text.StringBuilder();
+        info.AppendLine("=== Block Hardness Values ===");
+        
+        foreach (BlockType blockType in System.Enum.GetValues(typeof(BlockType)))
+        {
+            float hardness = GetHardness(blockType);
+            bool unbreakable = IsUnbreakable(blockType);
+            string status = unbreakable ? " (UNBREAKABLE)" : "";
+            info.AppendLine($"{blockType}: {hardness:F2}{status}");
+        }
+        
+        return info.ToString();
     }
     
     static Sprite GetFallbackSprite(BlockType blockType)

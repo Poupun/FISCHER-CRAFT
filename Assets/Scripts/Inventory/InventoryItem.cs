@@ -11,7 +11,7 @@ public struct ItemStack
     {
         blockType = type;
         // Allow special markers (like crafting result indicators) to bypass stack size limit
-        if (type == BlockType.Air && amount == 999)
+        if (type == BlockType.Air && (amount == 999 || amount >= 1000))
         {
             count = amount; // Don't clamp special markers
         }
@@ -21,7 +21,7 @@ public struct ItemStack
         }
     }
 
-    public bool IsEmpty => (blockType == BlockType.Air && count != 999) || count <= 0;
+    public bool IsEmpty => (blockType == BlockType.Air && count != 999 && count < 1000) || count <= 0;
 
     public int Add(int amount)
     {
