@@ -4,6 +4,29 @@ using System;
 public class PlayerController : MonoBehaviour
 {
     [Header("Movement Settings")] public float walkSpeed = 5f; public float sprintSpeed = 8f; public float crouchSpeed = 1f; public float mouseSensitivity = 2f; public float jumpForce = 5f;
+    [Tooltip("Gravity multiplier - higher values make you fall faster")]
+    [Range(1f, 5f)]
+    public float gravityMultiplier = 1.5f;
+    
+    [Header("Movement Physics - Tweak These!")]
+    [Tooltip("How fast the player accelerates to target speed on ground")]
+    public float groundAcceleration = 5000f;
+    [Tooltip("How fast the player decelerates when no input on ground")]
+    public float groundDeceleration = 5000f;
+    [Tooltip("Air control acceleration - how fast you can change direction in air")]
+    public float airAcceleration = 5000f;
+    [Tooltip("Air control multiplier - how much control you have in air (1 = full, 0 = none)")]
+    [Range(0f, 10f)]
+    public float airControlMultiplier = 1f;
+    [Tooltip("Max air speed multiplier - limits air speed relative to ground speed")]
+    [Range(0.1f, 2f)]
+    public float maxAirSpeedMultiplier = 1f;
+    [Tooltip("Air deceleration when no input in air (units per second) - KEEP LOW")]
+    [Range(0f, 10f)]
+    public float airDeceleration = 0.1f;
+    [Tooltip("Air resistance/drag - additional slowdown in air")]
+    [Range(0f, 1f)]
+    public float airDrag = 0f;
     [Header("Sprint Settings")] public KeyCode sprintKey = KeyCode.LeftShift; public float sprintFOVIncrease = 10f; public float fovTransitionSpeed = 8f;
     [Header("Crouch Settings")] public KeyCode crouchKey = KeyCode.LeftControl; public float crouchHeight = 1.3f; public float standHeight = 1.8f; public float crouchTransitionSpeed = 10f;
     [Header("Interaction")] public float interactionRange = 6f; public LayerMask blockLayerMask = -1;
@@ -18,7 +41,9 @@ public class PlayerController : MonoBehaviour
     private CharacterController characterController; private Camera playerCamera; private WorldGenerator worldGenerator; private UnifiedPlayerInventory playerInventory;
 
     // Movement state
-    private Vector3 velocity; private float xRotation = 0f; private bool isSprinting; private bool isCrouching; private float currentSpeed; private float baseFOV; private float targetHeight;
+    private Vector3 velocity; 
+    private Vector3 horizontalVelocity; // Separate horizontal velocity for physics-based movement
+    private float xRotation = 0f; private bool isSprinting; private bool isCrouching; private float currentSpeed; private float baseFOV; private float targetHeight;
 
     // Events
     public event Action<BlockType, Vector3Int> OnBlockPlaced; // Fired when player successfully places a block
@@ -43,17 +68,150 @@ public class PlayerController : MonoBehaviour
 
     void HandleMovementState()
     {
-        float horizontal = Input.GetAxis("Horizontal"); float vertical = Input.GetAxis("Vertical"); bool isMoving = Mathf.Abs(horizontal) > 0.1f || Mathf.Abs(vertical) > 0.1f;
+        float horizontal = Input.GetAxisRaw("Horizontal"); float vertical = Input.GetAxisRaw("Vertical"); bool isMoving = Mathf.Abs(horizontal) > 0.01f || Mathf.Abs(vertical) > 0.01f;
         if (Input.GetKeyDown(crouchKey)) { isCrouching = !isCrouching; targetHeight = isCrouching ? crouchHeight : standHeight; }
-        if (Input.GetKey(sprintKey) && !isCrouching && isMoving && characterController.isGrounded) { isSprinting = true; currentSpeed = sprintSpeed; }
-        else if (isCrouching) { isSprinting = false; currentSpeed = crouchSpeed; }
-        else { isSprinting = false; currentSpeed = walkSpeed; }
+        
+        // Sprint state - maintain while in air if key is held and moving
+        if (Input.GetKey(sprintKey) && !isCrouching && isMoving) 
+        { 
+            isSprinting = true; 
+            currentSpeed = sprintSpeed; 
+        }
+        else if (isCrouching) 
+        { 
+            isSprinting = false; 
+            currentSpeed = crouchSpeed; 
+        }
+        else if (isMoving)
+        { 
+            isSprinting = false; 
+            currentSpeed = walkSpeed; 
+        }
+        // Keep current speed/sprint state when not moving (preserves air state)
     }
 
     void HandleMovement()
     {
-        float horizontal = Input.GetAxis("Horizontal"); float vertical = Input.GetAxis("Vertical"); Vector3 direction = (transform.right * horizontal + transform.forward * vertical).normalized; Vector3 move = direction * currentSpeed;
-        if (characterController.isGrounded && velocity.y < 0) velocity.y = -2f; if (Input.GetButtonDown("Jump") && characterController.isGrounded && !isCrouching) velocity.y = Mathf.Sqrt(jumpForce * -2f * Physics.gravity.y); velocity.y += Physics.gravity.y * Time.deltaTime; move.y = velocity.y; characterController.Move(move * Time.deltaTime);
+        float horizontal = Input.GetAxisRaw("Horizontal");
+        float vertical = Input.GetAxisRaw("Vertical");
+        
+        // Calculate input direction in world space
+        Vector3 inputDirection = (transform.right * horizontal + transform.forward * vertical).normalized;
+        Vector3 targetVelocity = inputDirection * currentSpeed;
+        
+        // Physics-based horizontal movement
+        bool isGrounded = characterController.isGrounded;
+        
+        if (isGrounded)
+        {
+            // Ground movement - accelerate/decelerate to target velocity
+            if (inputDirection.magnitude > 0.01f)
+            {
+                // Accelerating toward target - use proper acceleration
+                Vector3 velocityDiff = targetVelocity - horizontalVelocity;
+                if (velocityDiff.magnitude > 0.01f)
+                {
+                    Vector3 acceleration = velocityDiff.normalized * groundAcceleration;
+                    horizontalVelocity += acceleration * Time.deltaTime;
+                    
+                    // Clamp to target speed if we overshoot
+                    if (Vector3.Dot(targetVelocity - horizontalVelocity, acceleration) <= 0)
+                    {
+                        horizontalVelocity = targetVelocity;
+                    }
+                    
+                    // Debug acceleration (remove this later)
+                    if (Time.frameCount % 30 == 0) // Log every 30 frames
+                    {
+                        Debug.Log($"Ground Accel: Current={horizontalVelocity.magnitude:F2}, Target={targetVelocity.magnitude:F2}, Accel={groundAcceleration}");
+                    }
+                }
+                else
+                {
+                    horizontalVelocity = targetVelocity;
+                }
+            }
+            else
+            {
+                // Decelerating when no input - use proper deceleration
+                Vector3 deceleration = -horizontalVelocity.normalized * groundDeceleration;
+                Vector3 newVelocity = horizontalVelocity + deceleration * Time.deltaTime;
+                
+                // Stop if we would overshoot zero
+                if (Vector3.Dot(horizontalVelocity, newVelocity) <= 0)
+                {
+                    horizontalVelocity = Vector3.zero;
+                }
+                else
+                {
+                    horizontalVelocity = newVelocity;
+                }
+            }
+        }
+        else
+        {
+            // Air movement - configurable air control
+            if (inputDirection.magnitude > 0.01f)
+            {
+                // Apply air control multiplier and max speed limit
+                Vector3 limitedTargetVelocity = targetVelocity * maxAirSpeedMultiplier;
+                
+                // Air acceleration toward target - modified by air control multiplier
+                Vector3 velocityDiff = limitedTargetVelocity - horizontalVelocity;
+                if (velocityDiff.magnitude > 0.01f)
+                {
+                    Vector3 acceleration = velocityDiff.normalized * (airAcceleration * airControlMultiplier);
+                    horizontalVelocity += acceleration * Time.deltaTime;
+                    
+                    // Clamp to target speed if we overshoot
+                    if (Vector3.Dot(limitedTargetVelocity - horizontalVelocity, acceleration) <= 0)
+                    {
+                        horizontalVelocity = limitedTargetVelocity;
+                    }
+                    
+                    // Debug air control (remove this later)
+                    if (Time.frameCount % 30 == 0) // Log every 30 frames
+                    {
+                        Debug.Log($"Air Control: Current={horizontalVelocity.magnitude:F2}, Target={limitedTargetVelocity.magnitude:F2}, Control={airControlMultiplier:F2}");
+                    }
+                }
+                else
+                {
+                    horizontalVelocity = limitedTargetVelocity;
+                }
+            }
+            else
+            {
+                // Air deceleration when no input - LINEAR slowdown (not exponential)
+                if (horizontalVelocity.magnitude > 0.01f)
+                {
+                    // Linear deceleration - reduce speed by fixed amount per second
+                    float currentSpeed = horizontalVelocity.magnitude;
+                    float newSpeed = Mathf.Max(0f, currentSpeed - airDeceleration * Time.deltaTime);
+                    
+                    if (newSpeed > 0f)
+                    {
+                        horizontalVelocity = horizontalVelocity.normalized * newSpeed;
+                    }
+                    else
+                    {
+                        horizontalVelocity = Vector3.zero;
+                    }
+                }
+            }
+        }
+        
+        // Vertical movement (gravity and jumping)
+        if (isGrounded && velocity.y < 0) velocity.y = -2f;
+        if (Input.GetButtonDown("Jump") && isGrounded && !isCrouching) 
+        {
+            velocity.y = Mathf.Sqrt(jumpForce * -2f * Physics.gravity.y * gravityMultiplier);
+        }
+        velocity.y += Physics.gravity.y * gravityMultiplier * Time.deltaTime;
+        
+        // Combine horizontal and vertical movement
+        Vector3 finalMovement = horizontalVelocity + Vector3.up * velocity.y;
+        characterController.Move(finalMovement * Time.deltaTime);
     }
 
     void UpdateCrouchHeight()

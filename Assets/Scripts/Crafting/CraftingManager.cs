@@ -748,15 +748,16 @@ public class CraftingManager : MonoBehaviour
     {
         for (int i = 0; i < CurrentCraftingSlotCount; i++)
         {
-            var stack = GetCraftingSlot(i);
-            if (!stack.IsEmpty)
+            // Work directly with inventory entries to preserve item/block types
+            var entry = playerInventory.GetSlot(CurrentCraftingStartIndex + i);
+            if (!entry.IsEmpty)
             {
-                stack.count--;
-                if (stack.count <= 0)
+                entry.count--;
+                if (entry.count <= 0)
                 {
-                    stack = new ItemStack(); // Empty stack
+                    entry = InventoryEntry.Empty;
                 }
-                SetCraftingSlot(i, stack); // Update the actual slot
+                playerInventory.SetSlot(CurrentCraftingStartIndex + i, entry);
             }
         }
     }

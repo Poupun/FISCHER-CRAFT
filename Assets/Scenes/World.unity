@@ -3550,7 +3550,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1426170045}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 797204f8fe15f7f4e8ab86d39ba3f810, type: 3}
   m_Name: 
@@ -3559,7 +3559,15 @@ MonoBehaviour:
   sprintSpeed: 7
   crouchSpeed: 2
   mouseSensitivity: 2
-  jumpForce: 1
+  jumpForce: 1.2
+  gravityMultiplier: 1.5
+  groundAcceleration: 20
+  groundDeceleration: 20
+  airAcceleration: 2
+  airControlMultiplier: 4
+  maxAirSpeedMultiplier: 1
+  airDeceleration: 10
+  airDrag: 0
   sprintKey: 304
   sprintFOVIncrease: 10
   fovTransitionSpeed: 10
@@ -4763,15 +4771,17 @@ MonoBehaviour:
   inventory: {fileID: 1426170054}
   miningSystem: {fileID: 1426170053}
   playerController: {fileID: 1426170048}
+  cameraToTrack: {fileID: 0}
   blockLocalPosition: {x: 0.55, y: -0.55, z: 0.75}
   blockLocalEuler: {x: 35, y: 225, z: 0}
   blockScale: 0.4
+  enableIdleBob: 1
   idleBobAmplitude: 0.02
   idleBobSpeed: 3
   poseLerpSpeed: 10
   enableSwing: 1
   breakSwingDuration: 0.25
-  breakSwingAngle: 30
+  breakSwingAngle: 40
   breakSwingCurve:
     serializedVersion: 2
     m_Curve:
@@ -4796,7 +4806,7 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  breakSwingOffset: {x: 0, y: -0.05, z: -0.05}
+  breakSwingOffset: {x: 0, y: -0.045, z: 0.05}
   placeSwingDuration: 0.18
   placeSwingAngle: 22
   placeSwingCurve:
@@ -4823,13 +4833,44 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  placeSwingOffset: {x: 0, y: -0.04, z: -0.03}
+  placeSwingOffset: {x: 0, y: -0.04, z: 0.05}
   swingSmoothing: 1
-  swingAxis: {x: 0, y: 0, z: 1}
+  swingAxis: {x: 1, y: 0, z: 0}
+  enableCameraSway: 1
+  cameraSwayStrength: 0.05
+  cameraSwaySpeed: 5
+  cameraSwayDelay: 0.1
+  enableSwitchAnimation: 1
+  switchAnimationDuration: 0.25
+  switchDownOffset: -0.3
+  switchAnimationCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
   loopWhileMining: 1
-  miningLoopPeriod: 0.55
-  miningLoopAngle: 30
-  miningLoopOffset: {x: 0, y: -0.045, z: -0.045}
+  miningLoopPeriod: 0.2
+  miningLoopAngle: 40
+  miningLoopOffset: {x: 0, y: -0.045, z: 0.05}
   miningLoopCurve:
     serializedVersion: 2
     m_Curve:
@@ -4854,8 +4895,8 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  itemLocalPosition: {x: 0.58, y: -0.48, z: 0.72}
-  itemLocalEuler: {x: 17.37, y: 814.2, z: 46.8}
+  itemLocalPosition: {x: 0.58, y: -0.36, z: 0.72}
+  itemLocalEuler: {x: 9.9, y: 814.2, z: 46.8}
   itemScale: 1
   itemDepth: 0.04
   sideDarken: 0.65
@@ -4873,7 +4914,7 @@ MonoBehaviour:
     blockType: 0
     itemType: 1001
     count: 1
-  shownBlock: 2
+  shownBlock: 8
   shownItem: 1001
   autoFallbackOnUnreadableTexture: 1
   logUnreadableTextureWarning: 1
