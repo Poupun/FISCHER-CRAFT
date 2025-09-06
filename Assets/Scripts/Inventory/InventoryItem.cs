@@ -10,10 +10,18 @@ public struct ItemStack
     public ItemStack(BlockType type, int amount)
     {
         blockType = type;
-        count = Mathf.Clamp(amount, 0, MaxStackSize);
+        // Allow special markers (like crafting result indicators) to bypass stack size limit
+        if (type == BlockType.Air && (amount == 999 || amount >= 1000))
+        {
+            count = amount; // Don't clamp special markers
+        }
+        else
+        {
+            count = Mathf.Clamp(amount, 0, MaxStackSize);
+        }
     }
 
-    public bool IsEmpty => blockType == BlockType.Air || count <= 0;
+    public bool IsEmpty => (blockType == BlockType.Air && count != 999 && count < 1000) || count <= 0;
 
     public int Add(int amount)
     {
@@ -33,5 +41,36 @@ public struct ItemStack
             count = 0;
         }
         return removed;
+    }
+    
+    // Conversion methods for migration
+    public static implicit operator InventoryEntry(ItemStack itemStack)
+    {
+        if (itemStack.IsEmpty)
+            return InventoryEntry.Empty;
+            
+        return InventoryEntry.CreateBlock(itemStack.blockType, itemStack.count);
+    }
+    
+    public static explicit operator ItemStack(InventoryEntry entry)
+    {
+        if (entry.entryType == InventoryEntryType.Block)
+        {
+            return new ItemStack(entry.blockType, entry.count);
+        }
+        else
+        {
+            // For migration: if item can be placed as block, convert
+            if (ItemManager.CanBePlaced(entry.itemType))
+            {
+                BlockType placementBlock = ItemManager.GetPlacementBlock(entry.itemType);
+                return new ItemStack(placementBlock, entry.count);
+            }
+            else
+            {
+                // Cannot convert item to ItemStack, return empty
+                return new ItemStack(BlockType.Air, 0);
+            }
+        }
     }
 }

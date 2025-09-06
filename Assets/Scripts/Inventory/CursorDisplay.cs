@@ -1,0 +1,188 @@
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+
+public class CursorDisplay : MonoBehaviour
+{
+    [Header("UI Components")]
+    public Image icon;
+    public TextMeshProUGUI countText;
+    
+    [Header("Animation Settings")]
+    public float animationDuration = 0.3f;
+    public float scaleMultiplier = 1.2f;
+    public AnimationCurve scaleCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
+    public AnimationCurve moveCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
+    
+    private Canvas canvas;
+    private RectTransform rectTransform;
+    private bool isAnimating = false;
+    private Vector3 animationStartPos;
+    private Vector3 targetMousePos;
+    private float animationTime = 0f;
+    private Vector3 originalScale;
+    private static CursorDisplay instance;
+    
+    void Start()
+    {
+        canvas = GetComponentInParent<Canvas>();
+        rectTransform = GetComponent<RectTransform>();
+        originalScale = rectTransform.localScale;
+        instance = this;
+        
+        Debug.Log($"CursorDisplay: Started. Canvas: {canvas}, RectTransform: {rectTransform}, Instance set: {instance != null}, Icon: {icon}, CountText: {countText}");
+        
+        // Initially hide the cursor display
+        gameObject.SetActive(false);
+    }
+    
+    void Update()
+    {
+        // Debug: Check cursor state every few frames
+        if (Time.frameCount % 60 == 0) // Every 60 frames (~1 second at 60fps)
+        {
+            Debug.Log($"CursorDisplay Update: HasItem={InventoryCursor.HasItem()}, GameObject.active={gameObject.activeInHierarchy}, isAnimating={isAnimating}");
+        }
+        
+        // DISABLE this cursor system since InventoryCursor + CursorManager handles the cursor
+        // This prevents conflicts between two cursor systems
+        if (gameObject.activeInHierarchy)
+        {
+            Debug.Log("CursorDisplay: Disabling cursor display to prevent conflicts with InventoryCursor system");
+            gameObject.SetActive(false);
+        }
+        
+        // The code below is commented out to use InventoryCursor system instead
+        /*
+        // Update cursor position to follow mouse
+        if (InventoryCursor.HasItem())
+        {
+            if (!gameObject.activeInHierarchy)
+            {
+                Debug.Log("CursorDisplay: Activating cursor display");
+                gameObject.SetActive(true);
+                UpdateDisplay();
+            }
+            
+            // Handle animation
+            if (isAnimating)
+            {
+                UpdateAnimation();
+            }
+            else
+            {
+                // Normal mouse following when not animating
+                UpdateMousePosition();
+            }
+        }
+        else
+        {
+            if (gameObject.activeInHierarchy)
+            {
+                Debug.Log("CursorDisplay: Deactivating cursor display");
+                gameObject.SetActive(false);
+                isAnimating = false;
+            }
+        }
+        */
+    }
+    
+    void UpdateAnimation()
+    {
+        animationTime += Time.unscaledDeltaTime;
+        float progress = animationTime / animationDuration;
+        
+        if (progress >= 1f)
+        {
+            // Animation complete
+            progress = 1f;
+            isAnimating = false;
+        }
+        
+        // Animate position
+        float moveProgress = moveCurve.Evaluate(progress);
+        rectTransform.localPosition = Vector3.Lerp(animationStartPos, targetMousePos, moveProgress);
+        
+        // Animate scale
+        float scaleProgress = scaleCurve.Evaluate(progress);
+        float currentScale = Mathf.Lerp(scaleMultiplier, 1f, scaleProgress);
+        rectTransform.localScale = originalScale * currentScale;
+    }
+    
+    void UpdateMousePosition()
+    {
+        Vector2 mousePosition = Input.mousePosition;
+        if (canvas != null)
+        {
+            Vector2 localPosition;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                canvas.transform as RectTransform,
+                mousePosition,
+                canvas.worldCamera,
+                out localPosition);
+            rectTransform.localPosition = localPosition;
+        }
+    }
+    
+    void UpdateDisplay()
+    {
+        var cursorStack = InventoryCursor.GetCursorStack();
+        
+        if (icon != null)
+        {
+            icon.sprite = BlockManager.GetBlockSprite(cursorStack.blockType);
+            icon.color = new Color(1f, 1f, 1f, 0.8f); // Slightly transparent
+        }
+        
+        if (countText != null)
+        {
+            countText.text = cursorStack.count > 1 ? cursorStack.count.ToString() : "";
+        }
+    }
+    
+    
+    // Public method to trigger animation from a world position (like inventory slot)
+    public static void StartPickupAnimation(Vector3 worldStartPos)
+    {
+        Debug.Log($"CursorDisplay.StartPickupAnimation: Called with pos {worldStartPos}, instance: {instance != null}");
+        if (instance == null) 
+        {
+            Debug.LogWarning("CursorDisplay.StartPickupAnimation: Instance is null!");
+            return;
+        }
+        instance.TriggerPickupAnimation(worldStartPos);
+    }
+    
+    void TriggerPickupAnimation(Vector3 worldStartPos)
+    {
+        if (canvas == null) return;
+        
+        // Convert world position to canvas local position
+        Vector2 screenPos = RectTransformUtility.WorldToScreenPoint(canvas.worldCamera, worldStartPos);
+        Vector2 localStartPos;
+        RectTransformUtility.ScreenPointToLocalPointInRectangle(
+            canvas.transform as RectTransform,
+            screenPos,
+            canvas.worldCamera,
+            out localStartPos);
+        
+        // Get current mouse position
+        Vector2 mousePos = Input.mousePosition;
+        Vector2 localMousePos;
+        RectTransformUtility.ScreenPointToLocalPointInRectangle(
+            canvas.transform as RectTransform,
+            mousePos,
+            canvas.worldCamera,
+            out localMousePos);
+        
+        // Set up animation
+        animationStartPos = localStartPos;
+        targetMousePos = localMousePos;
+        animationTime = 0f;
+        isAnimating = true;
+        
+        // Start at slot position with larger scale
+        rectTransform.localPosition = animationStartPos;
+        rectTransform.localScale = originalScale * scaleMultiplier;
+    }
+}

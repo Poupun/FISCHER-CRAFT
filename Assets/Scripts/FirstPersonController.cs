@@ -142,51 +142,9 @@ public class FirstPersonController : MonoBehaviour
     
     void HandleInteraction()
     {
-        if (playerCamera == null) return;
-        
-        // Create ray from camera center
-        Ray ray = new Ray(playerCamera.transform.position, playerCamera.transform.forward);
-        RaycastHit hit;
-        
-        // Left click - break block
-        if (Input.GetMouseButtonDown(0))
-        {
-            if (Physics.Raycast(ray, out hit, interactionRange, blockLayerMask))
-            {
-                BlockInfo blockInfo = hit.collider.GetComponent<BlockInfo>();
-                if (blockInfo != null && worldGenerator != null)
-                {
-                    worldGenerator.PlaceBlock(blockInfo.position, BlockType.Air);
-                    
-                    // Add camera shake for feedback
-                    if (cameraShake != null)
-                    {
-                        cameraShake.ShakeCamera();
-                    }
-                    
-                    // inventory removed: no item collection
-                }
-            }
-        }
-        
-        // Right click - place block
-        if (Input.GetMouseButtonDown(1))
-        {
-            if (Physics.Raycast(ray, out hit, interactionRange, blockLayerMask))
-            {
-                Vector3 hitPoint = hit.point + hit.normal * 0.5f;
-                Vector3Int blockPosition = Vector3Int.RoundToInt(hitPoint);
-                
-                // Check if position is not inside player
-                if (Vector3.Distance(blockPosition, transform.position) > 1.5f)
-                {
-                    if (worldGenerator != null)
-                    {
-                        // inventory removed: place a default block (e.g., Dirt) if desired; currently disabled
-                    }
-                }
-            }
-        }
+        // Mining is now handled by MiningSystem component
+        // Block placement is now handled by InteractionManager to prioritize dropped items
+        // Right-click interaction disabled here to prevent conflicts
     }
     
     void HandleFootsteps()

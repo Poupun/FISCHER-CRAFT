@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 public class HotbarUI : MonoBehaviour
 {
-    public PlayerInventory inventory;
+    public UnifiedPlayerInventory inventory;
     public RectTransform slotContainer; // If null, will use own RectTransform
     public GameObject slotPrefab;       // Optional: if omitted but children exist, we'll use them
     public Color selectedColor = Color.yellow;
@@ -14,8 +14,6 @@ public class HotbarUI : MonoBehaviour
     [Header("Selection Animation")] public float selectedScale = 1.25f; public float normalScale = 1f; public float scaleLerpSpeed = 12f;
 
     private SlotUI[] slots;
-    private Dictionary<BlockType, Sprite> spriteCache = new Dictionary<BlockType, Sprite>();
-    private WorldGenerator worldGenerator; // to access textures
 
     [System.Serializable]
     private class SlotUI
@@ -35,9 +33,8 @@ public class HotbarUI : MonoBehaviour
 
     void Start()
     {
-        if (inventory == null) inventory = FindFirstObjectByType<PlayerInventory>();
-        worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
-    if (inventory != null) inventory.OnInventoryChanged += HandleInventoryChanged;
+        if (inventory == null) inventory = FindFirstObjectByType<UnifiedPlayerInventory>();
+        if (inventory != null) inventory.OnInventoryChanged += HandleInventoryChanged;
         EnsureSlots();
         RefreshAll(force: true);
         ForceInitialScales();
@@ -57,10 +54,9 @@ public class HotbarUI : MonoBehaviour
     {
         if (inventory == null)
         {
-            inventory = FindFirstObjectByType<PlayerInventory>();
+            inventory = FindFirstObjectByType<UnifiedPlayerInventory>();
             if (inventory == null) return;
         }
-    if (worldGenerator == null) worldGenerator = FindFirstObjectByType<WorldGenerator>(FindObjectsInactive.Exclude);
 
         if (slots == null || slots.Length == 0) EnsureSlots();
         if (slots == null) return;
@@ -172,34 +168,39 @@ public class HotbarUI : MonoBehaviour
     void UpdateSlot(int index, bool force)
     {
         if (index < 0 || index >= slots.Length || index >= inventory.hotbar.Length) return;
-        var stack = inventory.hotbar[index];
+        var entry = inventory.hotbar[index];
         var ui = slots[index];
         if (ui == null) return;
-        bool typeChanged = ui.shownType != stack.blockType;
-        bool countChanged = ui.shownCount != stack.count;
+        
+        // Convert InventoryEntry to ItemStack-like values for UI compatibility
+        BlockType currentType = entry.entryType == InventoryEntryType.Block ? entry.blockType : BlockType.Air;
+        int currentCount = entry.count;
+        
+        bool typeChanged = ui.shownType != currentType;
+        bool countChanged = ui.shownCount != currentCount;
         if (!force && !typeChanged && !countChanged) return;
-        ui.shownType = stack.blockType;
-        ui.shownCount = stack.count;
-        // Handle Icon component only - assign block sprites
+        ui.shownType = currentType;
+        ui.shownCount = currentCount;
+        // Handle Icon component - assign sprites for both blocks and items using unified system
         if (ui.icon != null)
         {
-            if (stack.IsEmpty)
+            if (entry.IsEmpty)
             {
                 ui.icon.enabled = false;
             }
             else
             {
                 ui.icon.enabled = true;
-                ui.icon.sprite = GetSpriteForBlock(stack.blockType);
+                ui.icon.sprite = entry.GetSprite(); // Use unified sprite system
                 ui.icon.color = Color.white;
                 ui.icon.preserveAspect = true;
             }
         }
         if (ui.countText != null)
         {
-            if (stack.IsEmpty) ui.countText.text = string.Empty;
-            else if (showTypeLabel) ui.countText.text = stack.blockType + (stack.count > 1 ? " x" + stack.count : "");
-            else ui.countText.text = (stack.count > 1 ? stack.count.ToString() : string.Empty);
+            if (entry.IsEmpty) ui.countText.text = string.Empty;
+            else if (showTypeLabel) ui.countText.text = currentType + (currentCount > 1 ? " x" + currentCount : "");
+            else ui.countText.text = (currentCount > 1 ? currentCount.ToString() : string.Empty);
         }
     }
 
@@ -237,36 +238,6 @@ public class HotbarUI : MonoBehaviour
         }
     }
 
-    Sprite GetSpriteForBlock(BlockType type)
-    {
-        if (type == BlockType.Air) return null;
-    // Using only flat texture sprites now (3D generator removed)
-        // Fallback: existing texture->sprite simple icon
-        if (spriteCache.TryGetValue(type, out var spc) && spc != null) return spc;
-        Texture2D tex = null;
-        if ((int)type < BlockDatabase.blockTypes.Length)
-        {
-            tex = BlockDatabase.blockTypes[(int)type].blockTexture;
-        }
-        if (tex == null && worldGenerator != null)
-        {
-            switch (type)
-            {
-                case BlockType.Grass: tex = worldGenerator.grassTexture; break;
-                case BlockType.Dirt: tex = worldGenerator.dirtTexture; break;
-                case BlockType.Stone: tex = worldGenerator.stoneTexture; break;
-                case BlockType.Sand: tex = worldGenerator.sandTexture; break;
-                case BlockType.Coal: tex = worldGenerator.coalTexture; break;
-                case BlockType.Log: tex = worldGenerator.logTexture; break;
-                case BlockType.Leaves: tex = worldGenerator.leavesTexture; break;
-            }
-        }
-        if (tex == null) { spriteCache[type] = null; return null; }
-        var sprite = Sprite.Create(tex, new Rect(0,0,tex.width, tex.height), new Vector2(0.5f,0.5f), 32f);
-        sprite.name = type + "_SpriteFallback";
-        spriteCache[type] = sprite;
-        return sprite;
-    }
 
     void DumpSlotIconMapping()
     {
@@ -275,9 +246,10 @@ public class HotbarUI : MonoBehaviour
         sb.AppendLine("[HotbarUI] Slot -> (BlockType,count) -> SpriteName");
         for (int i=0;i<Mathf.Min(slots.Length, inventory.hotbar.Length);i++)
         {
-            var st = inventory.hotbar[i]; var ui = slots[i];
+            var entry = inventory.hotbar[i]; var ui = slots[i];
             string spriteName = ui?.icon != null && ui.icon.sprite != null ? ui.icon.sprite.name : "<none>";
-            sb.AppendLine($" {i}: {st.blockType} x{st.count} -> {spriteName}");
+            string entryDesc = entry.entryType == InventoryEntryType.Block ? $"{entry.blockType}" : $"{entry.itemType}";
+            sb.AppendLine($" {i}: {entryDesc} x{entry.count} -> {spriteName}");
         }
         Debug.Log(sb.ToString());
     }

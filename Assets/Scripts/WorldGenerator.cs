@@ -11,34 +11,12 @@ public class WorldGenerator : MonoBehaviour
     public int worldHeight = 16;
     public int worldDepth = 16;
 
-    [Header("Superflat Settings")] 
-    [Tooltip("When enabled, generate a Minecraft-like superflat world (no caves, plains only)")]
-    public bool generateSuperflat = true;
-    [Min(0)] public int flatStoneLayers = 1;   // acts as bedrock for now
-    [Min(0)] public int flatDirtLayers = 3;
-    [Min(0)] public int flatGrassLayers = 1;
-
-    [Header("Height Variation (Plains Biome)")]
-    [Tooltip("Enable simple noise-based height variation for the superflat world (acts as first plain biome prototype)")]
-    public bool enableHeightVariation = true;
+    [Header("World Generation")]
     [Tooltip("World seed for deterministic generation")]
     public int worldSeed = 12345;
-    [Tooltip("Amplitude (in blocks) of height variation above/below the base grass level")]
-    [Min(0)] public int heightVariation = 4;
-    [Tooltip("Perlin/Fractal noise scale (higher = smoother, lower = more frequent variation)")]
-    public float heightNoiseScale = 48f;
-    [Header("Fractal Noise")] 
-    [Tooltip("Number of octaves for fractal noise (1 = basic Perlin)")]
-    [Range(1,6)] public int heightNoiseOctaves = 3;
-    [Tooltip("Persistence factor for amplitude across octaves")]
-    [Range(0f,1f)] public float heightNoisePersistence = 0.5f;
-    [Tooltip("Lacunarity factor for frequency growth across octaves")]
-    [Range(1.5f,4f)] public float heightNoiseLacunarity = 2.0f;
-    [Tooltip("Vertical bias added after noise mapping (-1..1) before scaling; can shift overall terrain up or down relative to base")]
-    [Range(-1f,1f)] public float heightNoiseBias = 0f;
 
     [Header("Chunk Streaming")] 
-    [Tooltip("Enable player-centered chunk streaming for infinite superflat world")]
+    [Tooltip("Enable player-centered chunk streaming for infinite world")]
     public bool useChunkStreaming = true;
     [Min(4)] public int chunkSizeX = 16;
     [Min(4)] public int chunkSizeZ = 16;
@@ -71,15 +49,29 @@ public class WorldGenerator : MonoBehaviour
     [Tooltip("After chunks are ready, reposition the player to stand on the highest solid block under them.")]
     public bool snapPlayerToGroundOnSpawn = true;
     
-    [Header("Block Textures")]
+    [Header("Block Management System")]
+    [Tooltip("Block textures and properties are now managed by BlockManager using BlockConfiguration assets. See Assets/Data/Blocks/ folder.")]
+    [SerializeField] private bool _useNewBlockSystem = true; // Visual indicator in Inspector
+    
+    [Header("Legacy Block Textures (For Backward Compatibility)")]
+    [Tooltip("These textures are kept for fallback compatibility. Use BlockConfiguration assets instead.")]
     public Texture2D grassTexture;
-    public Texture2D grassSideTexture; // sides for grass block
+    public Texture2D grassSideTexture;
     public Texture2D dirtTexture;
     public Texture2D stoneTexture;
     public Texture2D sandTexture;
     public Texture2D coalTexture;
     public Texture2D logTexture;
     public Texture2D leavesTexture;
+    public Texture2D woodPlanksTexture;
+    public Texture2D bedrockTexture;
+    public Texture2D gravelTexture;
+    public Texture2D ironTexture;
+    public Texture2D goldTexture;
+    public Texture2D diamondTexture;
+    public Texture2D craftingTableTexture;
+    public Texture2D craftingTableFrontTexture;
+    public Texture2D craftingTableSideTexture;
 
     [Header("Plants (New)")]
     [Tooltip("Scriptable Object list of plants with textures, sizes, and weights.")]
@@ -752,43 +744,144 @@ public class WorldGenerator : MonoBehaviour
         
         for (int i = 0; i < BlockDatabase.blockTypes.Length; i++)
         {
-            if (BlockDatabase.blockTypes[i].blockType != BlockType.Air)
+            var blockType = BlockDatabase.blockTypes[i].blockType;
+            if (blockType != BlockType.Air)
             {
-                // Use URP/Lit shader instead of Standard
-                Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+                // Try to get material from BlockManager first
+                Material mat = BlockManager.GetBlockMaterial(blockType);
                 
-                // Apply texture if available, otherwise use color
-                if (BlockDatabase.blockTypes[i].blockTexture != null)
+                // If BlockManager doesn't have it, create one using available textures
+                if (mat == null)
                 {
-                    mat.mainTexture = BlockDatabase.blockTypes[i].blockTexture;
-                    mat.SetTexture("_BaseMap", BlockDatabase.blockTypes[i].blockTexture);
-                    mat.color = Color.white; // Use white to show texture correctly
+                    mat = CreateMaterialForBlockType(blockType);
+                }
+                
+                if (mat != null)
+                {
+                    blockMaterials[i] = mat;
+                    BlockDatabase.blockTypes[i].blockMaterial = mat;
                 }
                 else
                 {
-                    mat.color = BlockDatabase.blockTypes[i].blockColor;
-                }
-                
-                // Configure material properties for pixel art and reduced tiling
-                mat.SetFloat("_Smoothness", 0.0f); // No glossiness
-                mat.SetFloat("_Metallic", 0.0f);   // Not metallic
-                // Two-sided so we see the underside faces when looking down into holes
-                mat.SetFloat("_Cull", 0f);
-                
-                mat.name = BlockDatabase.blockTypes[i].blockName + "Material";
-                blockMaterials[i] = mat;
-                BlockDatabase.blockTypes[i].blockMaterial = mat;
-
-                // Ambient fill to avoid pitch-black faces in shadow
-                if (enableAmbientFill)
-                {
-                    Color ec = new Color(ambientFill, ambientFill, ambientFill, 1f);
-                    mat.SetColor("_EmissionColor", ec);
-                    mat.EnableKeyword("_EMISSION");
+                    Debug.LogError($"WorldGenerator: Failed to create material for {blockType}!");
                 }
             }
         }
-
+        
+        // Create special materials for multi-sided blocks
+        CreateGrassSideMaterial();
+        CreateCraftingTableMaterials();
+        
+        // Configure special material properties (leaves, etc.)
+        ConfigureSpecialMaterials();
+        
+        Debug.Log($"WorldGenerator: Created materials for {blockMaterials.Length} block types using BlockManager system");
+    }
+    
+    Material CreateMaterialForBlockType(BlockType blockType)
+    {
+        // Use URP/Lit shader
+        Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        
+        // Get texture from BlockManager or fallback to hardcoded textures
+        Texture2D tex = GetTextureForBlockType(blockType);
+        
+        if (tex != null)
+        {
+            mat.mainTexture = tex;
+            mat.SetTexture("_BaseMap", tex);
+            mat.color = Color.white;
+        }
+        else
+        {
+            // Fallback to block database color
+            mat.color = BlockDatabase.blockTypes[(int)blockType].blockColor;
+        }
+        
+        // Configure material properties for pixel art
+        mat.SetFloat("_Smoothness", 0.0f);
+        mat.SetFloat("_Metallic", 0.0f);
+        mat.SetFloat("_Cull", 0f); // Two-sided
+        
+        mat.name = blockType + "Material";
+        return mat;
+    }
+    
+    Texture2D GetTextureForBlockType(BlockType blockType)
+    {
+        // First try BlockManager
+        var blockConfig = BlockManager.GetBlockConfiguration(blockType);
+        if (blockConfig != null && blockConfig.mainTexture != null)
+        {
+            return blockConfig.mainTexture;
+        }
+        
+        // Fallback to legacy hardcoded textures (for backward compatibility during transition)
+        switch (blockType)
+        {
+            case BlockType.Grass: return grassTexture;
+            case BlockType.Dirt: return dirtTexture;
+            case BlockType.Stone: return stoneTexture;
+            case BlockType.Sand: return sandTexture;
+            case BlockType.Coal: return coalTexture;
+            case BlockType.Log: return logTexture;
+            case BlockType.Leaves: return leavesTexture;
+            case BlockType.WoodPlanks: return woodPlanksTexture;
+            case BlockType.CraftingTable: return craftingTableTexture;
+            case BlockType.Bedrock: return bedrockTexture;
+            case BlockType.Gravel: return gravelTexture;
+            case BlockType.Iron: return ironTexture;
+            case BlockType.Gold: return goldTexture;
+            case BlockType.Diamond: return diamondTexture;
+            default: return null;
+        }
+    }
+    
+    void CreateGrassSideMaterial()
+    {
+        var blockConfig = BlockManager.GetBlockConfiguration(BlockType.Grass);
+        Texture2D grassSideTex = (blockConfig != null && blockConfig.hasMultipleSides && blockConfig.sideTexture != null) 
+            ? blockConfig.sideTexture 
+            : grassSideTexture; // Fallback
+            
+        if (grassSideTex != null)
+        {
+            // Main grass side material
+            _grassSideMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            _grassSideMaterial.mainTexture = grassSideTex;
+            _grassSideMaterial.SetTexture("_BaseMap", grassSideTex);
+            _grassSideMaterial.color = Color.white;
+            _grassSideMaterial.SetFloat("_Smoothness", 0.0f);
+            _grassSideMaterial.SetFloat("_Metallic", 0.0f);
+            _grassSideMaterial.SetFloat("_Cull", 0f);
+            _grassSideMaterial.name = "GrassSideMaterial";
+            
+            // Overlay variant (alpha-clipped, unlit-like) to layer over dirt base
+            _grassSideOverlayMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            _grassSideOverlayMaterial.name = "GrassSideOverlay";
+            _grassSideOverlayMaterial.mainTexture = grassSideTex;
+            _grassSideOverlayMaterial.SetTexture("_BaseMap", grassSideTex);
+            _grassSideOverlayMaterial.color = Color.white;
+            _grassSideOverlayMaterial.SetFloat("_Cull", 0f);
+            _grassSideOverlayMaterial.SetFloat("_AlphaClip", 1f);
+            _grassSideOverlayMaterial.SetFloat("_Cutoff", 0.5f);
+            _grassSideOverlayMaterial.EnableKeyword("_ALPHATEST_ON");
+            _grassSideOverlayMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
+        }
+    }
+    
+    void CreateCraftingTableMaterials()
+    {
+        var blockConfig = BlockManager.GetBlockConfiguration(BlockType.CraftingTable);
+        if (blockConfig != null && blockConfig.hasMultipleSides)
+        {
+            // Create materials for different sides if textures are available
+            // This method can be expanded based on specific crafting table texture needs
+        }
+    }
+    
+    void ConfigureSpecialMaterials()
+    {
         // Leaves: ensure proper lighting with URP Simple Lit + alpha cutout
         if (BlockDatabase.blockTypes[(int)BlockType.Leaves].blockMaterial != null)
         {
@@ -813,31 +906,6 @@ public class WorldGenerator : MonoBehaviour
                 }
             }
             ApplyLeafMaterialSettings(lm);
-        }
-
-        // Build a dedicated grass side material if we have a side texture
-        if (grassSideTexture != null)
-        {
-            _grassSideMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            _grassSideMaterial.name = "GrassSideMaterial";
-            _grassSideMaterial.mainTexture = grassSideTexture;
-            _grassSideMaterial.SetTexture("_BaseMap", grassSideTexture);
-            _grassSideMaterial.color = Color.white;
-            _grassSideMaterial.SetFloat("_Smoothness", 0.0f);
-            _grassSideMaterial.SetFloat("_Metallic", 0.0f);
-            _grassSideMaterial.SetFloat("_Cull", 0f);
-
-            // Overlay variant (alpha-clipped, unlit-like) to layer over dirt base
-            _grassSideOverlayMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
-            _grassSideOverlayMaterial.name = "GrassSideOverlay";
-            _grassSideOverlayMaterial.mainTexture = grassSideTexture;
-            _grassSideOverlayMaterial.SetTexture("_BaseMap", grassSideTexture);
-            _grassSideOverlayMaterial.color = Color.white;
-            _grassSideOverlayMaterial.SetFloat("_Cull", 0f);
-            _grassSideOverlayMaterial.SetFloat("_AlphaClip", 1f);
-            _grassSideOverlayMaterial.SetFloat("_Cutoff", 0.5f);
-            _grassSideOverlayMaterial.EnableKeyword("_ALPHATEST_ON");
-            _grassSideOverlayMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest; // after opaque dirt
         }
     }
 
@@ -870,33 +938,113 @@ public class WorldGenerator : MonoBehaviour
     // Public accessor for chunk mesh builder
     public Material GetBlockMaterial(BlockType t)
     {
-        return blockMaterials != null ? blockMaterials[(int)t] : null;
+        if (blockMaterials == null) return null;
+        
+        int blockIndex = (int)t;
+        
+        // Migration: Handle old saved BlockType values after Stick removal
+        if (blockIndex == 16) // Old CraftingTable value
+        {
+            Debug.Log($"Migrating old BlockType value 16 (CraftingTable) to new value 15");
+            blockIndex = 15; // New CraftingTable value
+            t = BlockType.CraftingTable;
+        }
+        
+        if (blockIndex < 0 || blockIndex >= blockMaterials.Length)
+        {
+            Debug.LogWarning($"BlockType {t} (index {blockIndex}) is out of bounds for blockMaterials array (length {blockMaterials.Length})");
+            return null;
+        }
+        
+        return blockMaterials[blockIndex];
     }
 
     // Returns the material to use for a particular face of a block.
     // faceIndex matches ChunkMeshBuilder's order: 0=+X,1=-X,2=+Y(top),3=-Y(bottom),4=+Z,5=-Z
     public Material GetFaceMaterial(BlockType t, int faceIndex)
     {
-        if (t != BlockType.Grass)
+        // Check if this block type has multi-sided configuration
+        var blockConfig = BlockManager.GetBlockConfiguration(t);
+        if (blockConfig != null && blockConfig.hasMultipleSides)
         {
-            return GetBlockMaterial(t);
+            return GetMultiSidedMaterial(t, faceIndex, blockConfig);
         }
-        // Grass: top uses grassTexture, bottom uses dirt, sides use grassSide
-        if (faceIndex == 2) // +Y top
+        
+        // For single-sided blocks or fallback, use standard material
+        return GetBlockMaterial(t);
+    }
+    
+    Material GetMultiSidedMaterial(BlockType blockType, int faceIndex, BlockConfiguration config)
+    {
+        switch (blockType)
         {
-            return GetBlockMaterial(BlockType.Grass);
+            case BlockType.Grass:
+                return GetGrassFaceMaterial(faceIndex, config);
+                
+            case BlockType.CraftingTable:
+                return GetCraftingTableFaceMaterial(faceIndex, config);
+                
+            default:
+                // For other multi-sided blocks, use main texture
+                return GetBlockMaterial(blockType);
         }
-        if (faceIndex == 3) // -Y bottom
+    }
+    
+    Material GetGrassFaceMaterial(int faceIndex, BlockConfiguration config)
+    {
+        // faceIndex: 0=+X,1=-X,2=+Y(top),3=-Y(bottom),4=+Z,5=-Z
+        switch (faceIndex)
         {
-            return GetBlockMaterial(BlockType.Dirt);
+            case 2: // Top face
+                return config.topTexture != null ? 
+                    CreateTempMaterial(config.topTexture) : 
+                    GetBlockMaterial(BlockType.Grass);
+                    
+            case 3: // Bottom face  
+                return config.bottomTexture != null ?
+                    CreateTempMaterial(config.bottomTexture) :
+                    GetBlockMaterial(BlockType.Dirt); // Fallback
+                    
+            default: // Side faces
+                if (config.sideTexture != null && _grassSideMaterial != null)
+                    return _grassSideMaterial;
+                return GetBlockMaterial(BlockType.Grass); // Fallback
         }
-        // sides
-        if (_grassSideMaterial != null)
+    }
+    
+    Material GetCraftingTableFaceMaterial(int faceIndex, BlockConfiguration config)
+    {
+        // Similar logic for crafting table faces
+        switch (faceIndex)
         {
-            return _grassSideMaterial;
+            case 2: // Top face
+                return config.topTexture != null ?
+                    CreateTempMaterial(config.topTexture) :
+                    GetBlockMaterial(BlockType.CraftingTable);
+                    
+            case 3: // Bottom face
+                return config.bottomTexture != null ?
+                    CreateTempMaterial(config.bottomTexture) :
+                    GetBlockMaterial(BlockType.WoodPlanks); // Fallback to wood planks
+                    
+            default: // Side faces
+                return config.sideTexture != null ?
+                    CreateTempMaterial(config.sideTexture) :
+                    GetBlockMaterial(BlockType.CraftingTable);
         }
-        // Fallback to grass if no side texture available
-        return GetBlockMaterial(BlockType.Grass);
+    }
+    
+    // Helper method to create temporary materials for specific textures
+    Material CreateTempMaterial(Texture2D texture)
+    {
+        var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        mat.mainTexture = texture;
+        mat.SetTexture("_BaseMap", texture);
+        mat.color = Color.white;
+        mat.SetFloat("_Smoothness", 0.0f);
+        mat.SetFloat("_Metallic", 0.0f);
+        mat.SetFloat("_Cull", 0f);
+        return mat;
     }
 
     // Exposed for mesh builder overlay composition
@@ -920,52 +1068,14 @@ public class WorldGenerator : MonoBehaviour
     {
         worldData = new BlockType[worldWidth, worldHeight, worldDepth];
 
-        if (generateSuperflat)
+        // Generate world using the new clean system
+        for (int x = 0; x < worldWidth; x++)
         {
-            // Clamp layers to available height
-            int stone = Mathf.Max(0, flatStoneLayers);
-            int dirt = Mathf.Max(0, flatDirtLayers);
-            int grass = Mathf.Max(0, flatGrassLayers);
-            int totalLayers = Mathf.Min(worldHeight, stone + dirt + grass);
-            int grassStart = Mathf.Max(0, stone + dirt);
-
-            for (int x = 0; x < worldWidth; x++)
+            for (int z = 0; z < worldDepth; z++)
             {
-                for (int z = 0; z < worldDepth; z++)
+                for (int y = 0; y < worldHeight; y++)
                 {
-                    for (int y = 0; y < worldHeight; y++)
-                    {
-                        BlockType blockType = BlockType.Air;
-                        if (y < stone)
-                            blockType = BlockType.Stone; // acting as bedrock for now
-                        else if (y < stone + dirt)
-                            blockType = BlockType.Dirt;
-                        else if (y < totalLayers) // up to grass layers
-                            blockType = BlockType.Grass;
-                        else
-                            blockType = BlockType.Air;
-
-                        worldData[x, y, z] = blockType;
-                    }
-                }
-            }
-        }
-        else
-        {
-            // Legacy simple stacked layers (kept for reference/testing)
-            for (int x = 0; x < worldWidth; x++)
-            {
-                for (int z = 0; z < worldDepth; z++)
-                {
-                    for (int y = 0; y < worldHeight; y++)
-                    {
-                        BlockType blockType = BlockType.Air;
-                        if (y == 0) blockType = BlockType.Stone; // Bedrock substitute
-                        else if (y < 3) blockType = BlockType.Stone;
-                        else if (y < 6) blockType = BlockType.Dirt;
-                        else if (y == 6) blockType = BlockType.Grass;
-                        worldData[x, y, z] = blockType;
-                    }
+                    worldData[x, y, z] = GenerateBlockTypeAt(new Vector3Int(x, y, z));
                 }
             }
         }
@@ -975,97 +1085,86 @@ public class WorldGenerator : MonoBehaviour
         SpawnPlants();
     }
 
-    // Determine block type at a given world position according to current generation settings
+    // Clean, simple world generation - Minecraft-style layers
     public BlockType GenerateBlockTypeAt(Vector3Int worldPos)
     {
-        if (!generateSuperflat)
-        {
-            // Legacy stack based on Y only (kept for reference)
-            if (worldPos.y == 0) return BlockType.Stone;
-            if (worldPos.y < 3) return BlockType.Stone;
-            if (worldPos.y < 6) return BlockType.Dirt;
-            if (worldPos.y == 6) return BlockType.Grass;
-            return BlockType.Air;
-        }
-
-        // Superflat with optional height variation
-        int stone = Mathf.Max(0, flatStoneLayers);
-        int dirt = Mathf.Max(0, flatDirtLayers);
-        int grass = Mathf.Max(0, flatGrassLayers);
         if (worldPos.y < 0 || worldPos.y >= worldHeight) return BlockType.Air;
 
-        // Base top (zero-based Y) for grass without variation
-        int baseTop = stone + dirt + grass - 1;
-        int columnTop = baseTop;
-        if (enableHeightVariation && heightVariation > 0)
+        // Bedrock layer (unbreakable foundation)
+        if (worldPos.y == 0) return BlockType.Bedrock;
+        
+        // Deep underground (Y 1-12) - Stone with ores
+        if (worldPos.y <= 12)
         {
-            columnTop = GetColumnTopY(worldPos.x, worldPos.z, stone, dirt, grass, baseTop);
+            return GenerateUndergroundBlock(worldPos);
         }
-
-        if (worldPos.y < stone) return BlockType.Stone;
-        // Ensure we don't index above column top; everything between stone and top-1 is dirt
-        if (worldPos.y < columnTop) return BlockType.Dirt;
-        if (worldPos.y == columnTop) return BlockType.Grass;
-        return BlockType.Air;
+        
+        // Underground stone layer (Y 13-25)
+        if (worldPos.y <= 25)
+        {
+            // Mix of stone and some ores
+            System.Random rng = new System.Random(worldPos.x * 73856093 ^ worldPos.y * 19349663 ^ worldPos.z * 83492791 ^ worldSeed);
+            float chance = (float)rng.NextDouble();
+            
+            if (chance < 0.05f) return BlockType.Coal;
+            if (chance < 0.08f && worldPos.y <= 20) return BlockType.Iron;
+            if (chance < 0.15f) return BlockType.Gravel;
+            
+            return BlockType.Stone;
+        }
+        
+        // Surface terrain (Y 26+)
+        return GenerateSurfaceBlock(worldPos);
     }
-
-    // Returns top grass Y for a column (world XZ) using current noise settings.
-    // stone/dirt/grass parameters are passed for performance to avoid recomputing.
-    private int GetColumnTopY(int worldX, int worldZ, int stone, int dirt, int grass, int baseTop)
+    
+    private BlockType GenerateUndergroundBlock(Vector3Int worldPos)
     {
-        if (!enableHeightVariation || heightVariation <= 0)
-            return baseTop;
-        float n = EvaluateHeightNoise(worldX, worldZ); // [-1,1]
-        n += heightNoiseBias; // apply user bias
-        n = Mathf.Clamp(n, -1f, 1f);
-        int delta = Mathf.RoundToInt(n * heightVariation);
-        int columnTop = baseTop + delta;
-        // Prevent grass from dipping below stone layer (so we always have at least a dirt/grass cap).
-        int minTop = stone; // allow grass directly above stone if negative variation large
-        columnTop = Mathf.Max(minTop, columnTop);
-        columnTop = Mathf.Min(worldHeight - 1, columnTop);
-        return columnTop;
+        System.Random rng = new System.Random(worldPos.x * 73856093 ^ worldPos.y * 19349663 ^ worldPos.z * 83492791 ^ worldSeed);
+        float chance = (float)rng.NextDouble();
+        float depthFactor = (13f - worldPos.y) / 13f; // Deeper = rarer ores
+        
+        // Diamond (very rare, only deep)
+        if (worldPos.y <= 8 && chance < 0.003f * depthFactor)
+            return BlockType.Diamond;
+        
+        // Gold (rare, deeper preferred)
+        if (worldPos.y <= 10 && chance < 0.008f * depthFactor)
+            return BlockType.Gold;
+        
+        // Iron (common)
+        if (chance < 0.06f)
+            return BlockType.Iron;
+        
+        // Coal (most common)
+        if (chance < 0.15f)
+            return BlockType.Coal;
+            
+        return BlockType.Stone;
+    }
+    
+    private BlockType GenerateSurfaceBlock(Vector3Int worldPos)
+    {
+        // Simple height-based surface generation
+        float noise = Mathf.PerlinNoise((worldPos.x + worldSeed) * 0.02f, (worldPos.z + worldSeed) * 0.02f);
+        int surfaceHeight = Mathf.RoundToInt(28 + noise * 6); // Surface around Y=28-34
+        
+        if (worldPos.y < surfaceHeight - 4) return BlockType.Stone;
+        if (worldPos.y < surfaceHeight) return BlockType.Dirt;
+        if (worldPos.y == surfaceHeight) return BlockType.Grass;
+        
+        return BlockType.Air;
     }
 
     // Public helper (used in chunk streaming to compute useful Y per chunk)
     public int GetColumnTopY(int worldX, int worldZ)
     {
-        int stone = Mathf.Max(0, flatStoneLayers);
-        int dirt = Mathf.Max(0, flatDirtLayers);
-        int grass = Mathf.Max(0, flatGrassLayers);
-        int baseTop = stone + dirt + grass - 1;
-        return GetColumnTopY(worldX, worldZ, stone, dirt, grass, baseTop);
+        // Use the same surface generation logic as GenerateSurfaceBlock
+        float noise = Mathf.PerlinNoise((worldX + worldSeed) * 0.02f, (worldZ + worldSeed) * 0.02f);
+        int surfaceHeight = Mathf.RoundToInt(28 + noise * 6); // Surface around Y=28-34
+        return Mathf.Min(worldHeight - 1, surfaceHeight);
     }
 
-    // Fractal noise evaluation mapped to [-1,1]
-    private float EvaluateHeightNoise(int x, int z)
-    {
-        // Fast path single octave
-        if (heightNoiseOctaves <= 1)
-        {
-            float nx = (x + worldSeed * 13) / Mathf.Max(0.0001f, heightNoiseScale);
-            float nz = (z + worldSeed * 29) / Mathf.Max(0.0001f, heightNoiseScale);
-            float p = Mathf.PerlinNoise(nx, nz); // [0,1]
-            return p * 2f - 1f;
-        }
-
-        float amplitude = 1f;
-        float frequency = 1f;
-        float sum = 0f;
-        float norm = 0f;
-        for (int o = 0; o < heightNoiseOctaves; o++)
-        {
-            float nx = (x + worldSeed * 13) / Mathf.Max(0.0001f, heightNoiseScale) * frequency;
-            float nz = (z + worldSeed * 29) / Mathf.Max(0.0001f, heightNoiseScale) * frequency;
-            float p = Mathf.PerlinNoise(nx, nz); // [0,1]
-            sum += (p * 2f - 1f) * amplitude;
-            norm += amplitude;
-            amplitude *= heightNoisePersistence;
-            frequency *= heightNoiseLacunarity;
-        }
-        if (norm <= 0f) return 0f;
-        return Mathf.Clamp(sum / norm, -1f, 1f);
-    }
+    // Removed old complex noise system - now using simple Perlin noise in surface generation
 
     // --- Chunk streaming helpers ---
     private void EnsureChunksRoot()
@@ -1091,12 +1190,8 @@ public class WorldGenerator : MonoBehaviour
     }
     public string GetBiomeAt(Vector3 worldPos)
     {
-        // Placeholder until multiple biomes are added. Current terrain simulates plains.
-        if (generateSuperflat)
-        {
-            return enableHeightVariation ? "Plains" : "Superflat";
-        }
-        return "Overworld";
+        // Simple plains biome - can be expanded for multiple biomes in the future
+        return "Plains";
     }
 
     private void AutoFindPlayer()
@@ -1168,41 +1263,27 @@ public class WorldGenerator : MonoBehaviour
     // Create chunk and generate data with small yields to avoid spikes
         var chunk = new WorldGeneration.Chunks.Chunk(coord, chunkSizeX, worldHeight, chunkSizeZ, _chunksRoot);
 
-        // Determine vertical budget for this chunk. With height variation we scan columns to find the max top.
-        int stone = Mathf.Max(0, flatStoneLayers);
-        int dirt = Mathf.Max(0, flatDirtLayers);
-        int grass = Mathf.Max(0, flatGrassLayers);
-        int baseTop = stone + dirt + grass - 1;
-        int usefulY;
-        if (enableHeightVariation && heightVariation > 0)
+        // Determine vertical budget for this chunk by scanning surface heights
+        int maxTop = 0;
+        for (int lx = 0; lx < chunkSizeX; lx++)
         {
-            int maxTop = 0;
-            for (int lx = 0; lx < chunkSizeX; lx++)
+            int worldX = coord.x * chunkSizeX + lx;
+            for (int lz = 0; lz < chunkSizeZ; lz++)
             {
-                int worldX = coord.x * chunkSizeX + lx;
-                for (int lz = 0; lz < chunkSizeZ; lz++)
-                {
-                    int worldZ = coord.y * chunkSizeZ + lz;
-                    int top = GetColumnTopY(worldX, worldZ, stone, dirt, grass, baseTop);
-                    if (top > maxTop) maxTop = top;
-                }
+                int worldZ = coord.y * chunkSizeZ + lz;
+                int top = GetColumnTopY(worldX, worldZ);
+                if (top > maxTop) maxTop = top;
             }
-            usefulY = Mathf.Min(worldHeight, maxTop + 1); // +1 because top is zero-based
         }
-        else
-        {
-            usefulY = Mathf.Min(worldHeight, baseTop + 1);
-        }
+        int usefulY = Mathf.Min(worldHeight, maxTop + 1); // +1 because top is zero-based
         usefulY = Mathf.Max(1, usefulY);
 
         for (int lx = 0; lx < chunkSizeX; lx++)
         {
             for (int lz = 0; lz < chunkSizeZ; lz++)
             {
-                // Column-specific top to avoid iterating unnecessary upper air cells when variation enabled
-                int columnTop = enableHeightVariation && heightVariation > 0
-                    ? GetColumnTopY(coord.x * chunkSizeX + lx, coord.y * chunkSizeZ + lz, stone, dirt, grass, baseTop)
-                    : (stone + dirt + grass - 1);
+                // Column-specific top to avoid iterating unnecessary upper air cells
+                int columnTop = GetColumnTopY(coord.x * chunkSizeX + lx, coord.y * chunkSizeZ + lz);
                 int columnMaxY = Mathf.Min(worldHeight - 1, columnTop);
                 for (int ly = 0; ly <= columnMaxY; ly++)
                 {
@@ -1520,6 +1601,55 @@ public class WorldGenerator : MonoBehaviour
             }
             blockObjects[position] = grassBlockParent;
         }
+        else if (blockType == BlockType.CraftingTable)
+        {
+            // Crafting table has different textures for different faces
+            GameObject craftingTableParent = new GameObject($"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})");
+            craftingTableParent.transform.position = position;
+            craftingTableParent.transform.parent = transform;
+
+            // Define faces: 0=up, 1=down, 2=left, 3=right, 4=forward, 5=back
+            Vector3[] faceNormals = { Vector3.up, Vector3.down, Vector3.left, Vector3.right, Vector3.forward, Vector3.back };
+            Material[] faceMaterials = {
+                GetBlockMaterial(BlockType.CraftingTable), // Top
+                GetBlockMaterial(BlockType.WoodPlanks),    // Bottom (wood planks)
+                GetBlockMaterial(BlockType.CraftingTable), // Side
+                GetBlockMaterial(BlockType.CraftingTable), // Side
+                GetBlockMaterial(BlockType.CraftingTable), // Front
+                GetBlockMaterial(BlockType.CraftingTable)  // Back
+            };
+            Texture2D[] faceTextures = {
+                craftingTableTexture,      // Top
+                woodPlanksTexture,         // Bottom (wood planks)
+                craftingTableSideTexture,  // Left side
+                craftingTableSideTexture,  // Right side  
+                craftingTableFrontTexture, // Front
+                craftingTableSideTexture   // Back
+            };
+
+            for (int i = 0; i < 6; i++)
+            {
+                Vector3Int neighborPos = position + Vector3Int.RoundToInt(faceNormals[i]);
+                if (IsOutOfBounds(neighborPos) || GetBlockType(neighborPos) == BlockType.Air)
+                {
+                    GameObject face = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    face.transform.SetParent(craftingTableParent.transform, false);
+                    face.transform.position = position + faceNormals[i] * 0.5f;
+                    face.transform.rotation = Quaternion.LookRotation(-faceNormals[i]);
+                    
+                    Renderer faceRenderer = face.GetComponent<Renderer>();
+                    if (faceRenderer != null)
+                    {
+                        Material mat = CreateVariationMaterial(faceMaterials[i], position);
+                        mat.mainTexture = faceTextures[i];
+                        mat.SetTexture("_BaseMap", faceTextures[i]);
+                        faceRenderer.material = mat;
+                    }
+                    Destroy(face.GetComponent<Collider>());
+                }
+            }
+            blockObjects[position] = craftingTableParent;
+        }
         else
         {
             GameObject block = Instantiate(blockPrefab, position, Quaternion.identity, transform);
@@ -1602,6 +1732,55 @@ public class WorldGenerator : MonoBehaviour
                 }
             }
             blockObjects[position] = grassBlockParent;
+        }
+        else if (blockType == BlockType.CraftingTable)
+        {
+            // Crafting table has different textures for different faces
+            GameObject craftingTableParent = new GameObject($"{BlockDatabase.GetBlockData(blockType).blockName} ({position.x},{position.y},{position.z})");
+            craftingTableParent.transform.position = position;
+            craftingTableParent.transform.SetParent(p, true);
+
+            // Define faces: 0=up, 1=down, 2=left, 3=right, 4=forward, 5=back
+            Vector3[] faceNormals = { Vector3.up, Vector3.down, Vector3.left, Vector3.right, Vector3.forward, Vector3.back };
+            Material[] faceMaterials = {
+                GetBlockMaterial(BlockType.CraftingTable), // Top
+                GetBlockMaterial(BlockType.WoodPlanks),    // Bottom (wood planks)
+                GetBlockMaterial(BlockType.CraftingTable), // Side
+                GetBlockMaterial(BlockType.CraftingTable), // Side
+                GetBlockMaterial(BlockType.CraftingTable), // Front
+                GetBlockMaterial(BlockType.CraftingTable)  // Back
+            };
+            Texture2D[] faceTextures = {
+                craftingTableTexture,      // Top
+                woodPlanksTexture,         // Bottom (wood planks)
+                craftingTableSideTexture,  // Left side
+                craftingTableSideTexture,  // Right side  
+                craftingTableFrontTexture, // Front
+                craftingTableSideTexture   // Back
+            };
+
+            for (int i = 0; i < 6; i++)
+            {
+                Vector3Int neighborPos = position + Vector3Int.RoundToInt(faceNormals[i]);
+                if (IsOutOfBounds(neighborPos) || GetBlockType(neighborPos) == BlockType.Air)
+                {
+                    GameObject face = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    face.transform.SetParent(craftingTableParent.transform, false);
+                    face.transform.position = position + faceNormals[i] * 0.5f;
+                    face.transform.rotation = Quaternion.LookRotation(-faceNormals[i]);
+                    
+                    Renderer faceRenderer = face.GetComponent<Renderer>();
+                    if (faceRenderer != null)
+                    {
+                        Material mat = CreateVariationMaterial(faceMaterials[i], position);
+                        mat.mainTexture = faceTextures[i];
+                        mat.SetTexture("_BaseMap", faceTextures[i]);
+                        faceRenderer.material = mat;
+                    }
+                    Destroy(face.GetComponent<Collider>());
+                }
+            }
+            blockObjects[position] = craftingTableParent;
         }
         else
         {
@@ -1939,11 +2118,11 @@ public class WorldGenerator : MonoBehaviour
             {
         // Periodically yield to keep frame time responsive
         if ((workCounter++ & 31) == 0) yield return null;
-                // Density modulation using terrain noise at cell center
+                // Density modulation using simple terrain noise at cell center
                 int cx = gx + grid / 2;
                 int cz = gz + grid / 2;
-                float baseNoise = EvaluateHeightNoise(cx, cz); // [-1,1]
-                float densityScale = Mathf.Clamp01(0.6f + 0.4f * (baseNoise * 0.5f + 0.5f));
+                float baseNoise = Mathf.PerlinNoise((cx + worldSeed) * 0.01f, (cz + worldSeed) * 0.01f); // [0,1]
+                float densityScale = Mathf.Clamp01(0.6f + 0.4f * baseNoise);
                 // Expected trees per block
                 float densityPerBlock = (treesPerChunk <= 0f || chunk.sizeX <= 0 || chunk.sizeZ <= 0)
                     ? 0f
@@ -2404,16 +2583,8 @@ public class WorldGenerator : MonoBehaviour
             if (GetBlockType(new Vector3Int(x, y, z)) != BlockType.Air)
                 return y;
         }
-        // Fallback to superflat ground if none found
-        if (generateSuperflat)
-        {
-            int stone = Mathf.Max(0, flatStoneLayers);
-            int dirt = Mathf.Max(0, flatDirtLayers);
-            int grass = Mathf.Max(0, flatGrassLayers);
-            int totalLayers = Mathf.Min(worldHeight, stone + dirt + grass);
-            return totalLayers - 1;
-        }
-        return -1;
+        // Fallback to estimated surface height if none found
+        return GetColumnTopY(x, z);
     }
 
     // Build batched plants for a meshed chunk to keep loads lightweight

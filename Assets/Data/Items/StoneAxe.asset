@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8d28af0ea30c4734f91d7e345806a455, type: 3}
+  m_Name: StoneAxe
+  m_EditorClassIdentifier: 
+  itemType: 1011
+  displayName: Stone Axe
+  category: 0
+  maxStackSize: 1
+  iconTexture: {fileID: 2800000, guid: cc48698ad1346b0439e2fb2b5b1936d5, type: 3}
+  tintColor: {r: 1, g: 1, b: 1, a: 1}
+  canBePlaced: 0
+  placesAsBlock: 0
+  isCraftable: 1
+  isUsedInCrafting: 1
